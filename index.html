@@ -19,7 +19,6 @@
 </script>
 <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
 <script>
-/* Shim de almacenamiento: usa localStorage del navegador (reemplaza window.storage del entorno original) */
 if (!window.storage) {
   window.storage = {
     get:   async (k) => { const v = localStorage.getItem(k); return v == null ? null : { key: k, value: v }; },
@@ -47,6 +46,24 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 const KEY = "playa_autos_v4";
 async function loadDB() { try { const r = await window.storage.get(KEY); return r ? JSON.parse(r.value) : null; } catch { return null; } }
 async function saveDB(db) { try { await window.storage.set(KEY, JSON.stringify(db)); } catch {} }
+
+// ---------- Supabase (respaldo en la nube) ----------
+const SB_URL = "https://xyrmjbfaakvfnriijiwx.supabase.co";
+const SB_KEY = "sb_publishable_jz-Je03pSDgc4dVtH81ZnQ_e8gMdFxL";
+const SB_ROW = "motorgestion";
+const sbHeaders = { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" };
+async function subirNube(db) {
+  const body = JSON.stringify([{ id: SB_ROW, data: db, updated: new Date().toISOString() }]);
+  const r = await fetch(`${SB_URL}/rest/v1/respaldo?on_conflict=id`, { method: "POST", headers: { ...sbHeaders, Prefer: "resolution=merge-duplicates" }, body });
+  if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 120));
+  return true;
+}
+async function bajarNube() {
+  const r = await fetch(`${SB_URL}/rest/v1/respaldo?id=eq.${SB_ROW}&select=data,updated`, { headers: sbHeaders });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const j = await r.json();
+  return j && j[0] ? j[0] : null;
+}
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 const tempPass = () => Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -196,15 +213,41 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [auth, setAuth] = useState(null);
   const [mustChange, setMustChange] = useState(null);
+  const [nube, setNube] = useState({ estado: "idle", fecha: null });
+  const syncTimer = useRef();
 
   useEffect(() => { loadDB().then((d) => { if (d) setDb({ ...DB0, ...d }); setReady(true); }); }, []);
   useEffect(() => { if (ready) saveDB(db); }, [db, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(() => {
+      setNube((n) => ({ ...n, estado: "subiendo" }));
+      subirNube(db).then(() => setNube({ estado: "ok", fecha: new Date().toLocaleString("es-PY") })).catch(() => setNube((n) => ({ ...n, estado: "error" })));
+    }, 4000);
+    return () => clearTimeout(syncTimer.current);
+  }, [db, ready]);
+  const restaurarNube = async () => {
+    try {
+      const row = await bajarNube();
+      if (!row || !row.data) { alert("No hay respaldo en la nube todavía."); return; }
+      if (!confirm(`Restaurar los datos de la nube (última copia: ${row.updated ? new Date(row.updated).toLocaleString("es-PY") : "—"})? Reemplaza los datos actuales de este dispositivo.`)) return;
+      setDb({ ...DB0, ...row.data });
+      alert("Datos restaurados desde la nube.");
+    } catch (e) { alert("No se pudo restaurar: " + e.message); }
+  };
+  const subirNubeManual = async () => {
+    setNube((n) => ({ ...n, estado: "subiendo" }));
+    try { await subirNube(db); setNube({ estado: "ok", fecha: new Date().toLocaleString("es-PY") }); alert("Copia subida a la nube."); }
+    catch (e) { setNube((n) => ({ ...n, estado: "error" })); alert("No se pudo subir: " + e.message); }
+  };
+  const cloud = { nube, restaurarNube, subirNubeManual };
 
   if (!ready) return <div style={{ background: C.bg, color: C.dim, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>Cargando…</div>;
-  if (!auth) return <Login db={db} onDev={() => setAuth({ modo: "dev" })} onSys={(a, temp, susc) => { setAuth(a); if (temp) setMustChange(susc); }} />;
+  if (!auth) return <Login db={db} onDev={() => setAuth({ modo: "dev" })} onSys={(a, temp, susc) => { setAuth(a); if (temp) setMustChange(susc); }} cloud={cloud} />;
   if (mustChange) return <CambiarPass suscriptor={mustChange} setDb={setDb} onDone={() => setMustChange(null)} />;
-  if (auth.modo === "dev") return <DevApp db={db} setDb={setDb} onLogout={() => setAuth(null)} />;
-  return <Sistema db={db} setDb={setDb} auth={auth} onLogout={() => setAuth(null)} />;
+  if (auth.modo === "dev") return <DevApp db={db} setDb={setDb} onLogout={() => setAuth(null)} cloud={cloud} />;
+  return <Sistema db={db} setDb={setDb} auth={auth} onLogout={() => setAuth(null)} cloud={cloud} />;
 }
 
 function Login({ db, onDev, onSys }) {
@@ -419,7 +462,7 @@ function HistorialSuscModal({ susc, pagos, onClose, onDel }) {
     </Modal>
   );
 }
-function Sistema({ db, setDb, auth, onLogout }) {
+function Sistema({ db, setDb, auth, onLogout, cloud }) {
   const tid = auth.tenantId;
   const cfg = db.cfgs[tid] || CFG0;
   const setCfg = (c) => setDb((s) => ({ ...s, cfgs: { ...s.cfgs, [tid]: c } }));
@@ -461,6 +504,7 @@ function Sistema({ db, setDb, auth, onLogout }) {
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, fontSize: 12, color: C.dim }}>
           <BuscadorGlobal db={sdb} onCliente={(id) => { setSelCli(id); setTab(puede("clientes") ? "clientes" : "cobranza"); }} onVehiculo={() => setTab("stock")} onVenta={(vt) => { if (vt.plan) { setSelCli(vt.clienteId); setTab(puede("cobranza") ? "cobranza" : "clientes"); } else setTab("ventas"); }} />
           <span title="Cotización configurada">USD: Gs {nf.format(cfg.cotizacion)}</span>
+          {cloud && <span title="Respaldo en la nube" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>☁<span style={{ width: 8, height: 8, borderRadius: "50%", background: cloud.nube.estado === "ok" ? C.ok : cloud.nube.estado === "error" ? C.bad : cloud.nube.estado === "subiendo" ? C.warn : C.dim }} /></span>}
           {alertas > 0 && puede("cobranza") && <button onClick={() => setTab("cobranza")} style={{ background: "rgba(255,92,98,.15)", color: C.bad, border: `1px solid ${C.bad}`, borderRadius: 20, padding: "4px 12px", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>🔔 {alertas} vencida(s)</button>}
           <span>{auth.nombre || auth.user} · {auth.rol === "admin" ? "Admin" : "Funcionario"}</span>
           <Btn small kind="ghost" onClick={onLogout}>Salir</Btn>
@@ -487,7 +531,7 @@ function Sistema({ db, setDb, auth, onLogout }) {
         {tab === "reportes" && puede("reportes") && <Reportes db={sdb} cfg={cfg} setDb={setDb} tid={tid} />}
         {tab === "notas" && puede("notas") && <Notas db={sdb} setDb={setDb} tid={tid} />}
         {tab === "legal" && puede("legal") && <Legal db={sdb} cfg={cfg} selVeh={selVeh} setSelVeh={setSelVeh} setVeh={setVeh} />}
-        {tab === "cfg" && auth.rol === "admin" && <Config cfg={cfg} setCfg={setCfg} db={sdb} setDb={setDb} tid={tid} />}
+        {tab === "cfg" && auth.rol === "admin" && <Config cfg={cfg} setCfg={setCfg} db={sdb} setDb={setDb} tid={tid} cloud={cloud} />}
         {tab === "log" && auth.rol === "admin" && <Actividad db={sdb} setDb={setDb} />}
         {tab === "papelera" && auth.rol === "admin" && <Papelera db={sdb} setDb={setDb} setVeh={setVeh} />}
         </div>
@@ -1141,7 +1185,7 @@ function CartaOferta({ veh, cfg, l, set, db }) {
 }
 
 // ============================================================ AJUSTES (config + usuarios)
-function Config({ cfg, setCfg, db, setDb, tid }) {
+function Config({ cfg, setCfg, db, setDb, tid, cloud }) {
   const emp = cfg.empresa || {};
   const setEmp = (patch) => setCfg({ ...cfg, empresa: { ...emp, ...patch } });
   const logoRef = useRef();
@@ -1204,6 +1248,17 @@ function Config({ cfg, setCfg, db, setDb, tid }) {
         </div>
       </div>
       <div style={{ ...box, padding: 16, gridColumn: "1 / -1" }}><UsuariosSistema db={db} setDb={setDb} tid={tid} /></div>
+      {cloud && (() => { const est = cloud.nube.estado; const col = est === "ok" ? C.ok : est === "error" ? C.bad : est === "subiendo" ? C.warn : C.dim; const txt = est === "ok" ? "Sincronizado" : est === "subiendo" ? "Subiendo…" : est === "error" ? "Error al sincronizar" : "En espera"; return (
+        <div style={{ ...box, padding: 16, gridColumn: "1 / -1", borderTop: `2px solid ${col}` }}>
+          <b>☁ Respaldo en la nube (Supabase)</b>
+          <div style={{ fontSize: 12, color: C.dim, margin: "6px 0 12px" }}>Además del navegador, se guarda una copia automática en la nube. Estado: <b style={{ color: col }}>{txt}</b>{cloud.nube.fecha ? ` · última: ${cloud.nube.fecha}` : ""}.</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Btn kind="acc" onClick={cloud.subirNubeManual}>☁ Subir a la nube ahora</Btn>
+            <Btn kind="ghost" onClick={cloud.restaurarNube}>↓ Restaurar desde la nube</Btn>
+          </div>
+          <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>La copia en la nube es única para todo el sistema. "Restaurar" reemplaza los datos de este dispositivo por los de la nube.</div>
+        </div>
+      ); })()}
       <div style={{ ...box, padding: 16, gridColumn: "1 / -1" }}>
         <b>Copia de seguridad y exportación</b>
         <div style={{ fontSize: 12, color: C.dim, margin: "6px 0 12px" }}>Los datos se guardan en este navegador. Descargá una copia periódicamente para no perderlos.</div>
