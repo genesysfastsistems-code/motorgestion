@@ -52,11 +52,12 @@ const SB_URL = "https://xyrmjbfaakvfnriijiwx.supabase.co";
 const SB_KEY = "sb_publishable_jz-Je03pSDgc4dVtH81ZnQ_e8gMdFxL";
 const SB_ROW = "motorgestion";
 const sbHeaders = { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" };
-async function subirNube(db) {
-  const body = JSON.stringify([{ id: SB_ROW, data: db, updated: new Date().toISOString() }]);
+async function subirNube(db, updated) {
+  const upd = updated || new Date().toISOString();
+  const body = JSON.stringify([{ id: SB_ROW, data: db, updated: upd }]);
   const r = await fetch(`${SB_URL}/rest/v1/respaldo?on_conflict=id`, { method: "POST", headers: { ...sbHeaders, Prefer: "resolution=merge-duplicates" }, body });
   if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 120));
-  return true;
+  return upd;
 }
 async function bajarNube() {
   const r = await fetch(`${SB_URL}/rest/v1/respaldo?id=eq.${SB_ROW}&select=data,updated`, { headers: sbHeaders });
@@ -64,6 +65,41 @@ async function bajarNube() {
   const j = await r.json();
   return j && j[0] ? j[0] : null;
 }
+
+// ---------- Etapa 3: sincronización por registro ----------
+const SYNC_COLS = ["vehiculos", "clientes", "ventas", "usuarios", "caja", "reservas", "notas", "actividad", "cxp", "papelera", "suscriptores", "pagosSusc"];
+function snapshotDb(db) {
+  const m = {};
+  SYNC_COLS.forEach((col) => (db[col] || []).forEach((r) => { if (r && r.id) m[col + ":" + r.id] = { coleccion: col, tenant_id: r.tenantId || null, data: r, json: JSON.stringify(r) }; }));
+  Object.entries(db.cfgs || {}).forEach(([tid, cfg]) => { m["cfgs:" + tid] = { coleccion: "cfgs", tenant_id: tid, data: cfg, json: JSON.stringify(cfg) }; });
+  return m;
+}
+async function pushDiff(prevSnap, db) {
+  const cur = snapshotDb(db); const rows = []; const nuevoSnap = {}; const now = new Date().toISOString();
+  for (const pk in cur) { const c = cur[pk]; nuevoSnap[pk] = c.json; if (prevSnap[pk] !== c.json) rows.push({ pk, coleccion: c.coleccion, tenant_id: c.tenant_id, data: c.data, deleted: false, updated_at: now }); }
+  for (const pk in prevSnap) { if (!(pk in cur)) { const col = pk.slice(0, pk.indexOf(":")); rows.push({ pk, coleccion: col, tenant_id: null, data: null, deleted: true, updated_at: now }); } }
+  if (rows.length) { const r = await fetch(`${SB_URL}/rest/v1/registros?on_conflict=pk`, { method: "POST", headers: { ...sbHeaders, Prefer: "resolution=merge-duplicates" }, body: JSON.stringify(rows) }); if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 120)); }
+  return { snap: nuevoSnap, count: rows.length };
+}
+async function pullDesde(cursor) {
+  const q = cursor ? `?updated_at=gt.${encodeURIComponent(cursor)}&order=updated_at.asc&limit=8000` : `?order=updated_at.asc&limit=8000`;
+  const r = await fetch(`${SB_URL}/rest/v1/registros${q}`, { headers: sbHeaders });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return await r.json();
+}
+function aplicarPull(db, rows) {
+  const next = { ...db };
+  rows.forEach((row) => {
+    if (row.coleccion === "cfgs") { const tid = row.pk.slice(5); const cfgs = { ...(next.cfgs || {}) }; if (row.deleted) delete cfgs[tid]; else cfgs[tid] = row.data; next.cfgs = cfgs; return; }
+    const col = row.coleccion; if (!SYNC_COLS.includes(col)) return;
+    const id = row.pk.slice(col.length + 1);
+    const arr = (next[col] || []).slice(); const idx = arr.findIndex((x) => x.id === id);
+    if (row.deleted) { if (idx >= 0) arr.splice(idx, 1); } else { if (idx >= 0) arr[idx] = row.data; else arr.unshift(row.data); }
+    next[col] = arr;
+  });
+  return next;
+}
+const maxCursor = (rows) => rows.length ? rows[rows.length - 1].updated_at : null;
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 const tempPass = () => Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -208,39 +244,92 @@ function auditar(setDb, accion, detalle) {
   setDb((s) => ({ ...s, actividad: [{ id: uid(), tenantId: tid, usuario: usuario || "—", accion, detalle: detalle || "", ts: new Date().toISOString() }, ...(s.actividad || [])].slice(0, 3000) }));
 }
 
+const SYNC_ARR = ["vehiculos", "clientes", "ventas", "usuarios", "caja", "reservas", "notas", "actividad", "cxp", "papelera"];
 export default function App() {
   const [db, setDb] = useState(DB0);
   const [ready, setReady] = useState(false);
   const [auth, setAuth] = useState(null);
   const [mustChange, setMustChange] = useState(null);
   const [nube, setNube] = useState({ estado: "idle", fecha: null });
-  const syncTimer = useRef();
+  const dbRef = useRef(DB0); dbRef.current = db;
+  const dirtyRef = useRef(false);
+  const applyingRef = useRef(false);
+  const snapRef = useRef({});
+  const cursorRef = useRef(null);
+  const pushTimer = useRef(); const pollTimer = useRef(); const busyRef = useRef(false);
 
-  useEffect(() => { loadDB().then((d) => { if (d) setDb({ ...DB0, ...d }); setReady(true); }); }, []);
-  useEffect(() => { if (ready) saveDB(db); }, [db, ready]);
+  useEffect(() => {
+    (async () => {
+      const local = await loadDB();
+      let base = local ? { ...DB0, ...local } : { ...DB0 };
+      try {
+        const rows = await pullDesde(null);
+        if (rows && rows.length) { base = aplicarPull({ ...DB0 }, rows); cursorRef.current = maxCursor(rows); }
+        snapRef.current = Object.fromEntries(Object.entries(snapshotDb(base)).map(([k, v]) => [k, v.json]));
+        // si la nube está vacía y hay datos locales, subirlos
+        if ((!rows || !rows.length) && local) { const res = await pushDiff({}, base); snapRef.current = res.snap; }
+        setNube({ estado: "ok", fecha: new Date().toLocaleString("es-PY") });
+      } catch { setNube({ estado: "error", fecha: null }); snapRef.current = Object.fromEntries(Object.entries(snapshotDb(base)).map(([k, v]) => [k, v.json])); }
+      applyingRef.current = true; setDb(base);
+      setReady(true);
+    })();
+  }, []);
+
+  const empujar = async () => {
+    if (busyRef.current) return; busyRef.current = true;
+    setNube((n) => ({ ...n, estado: "subiendo" }));
+    try {
+      const res = await pushDiff(snapRef.current, dbRef.current);
+      snapRef.current = res.snap; dirtyRef.current = false;
+      setNube({ estado: "ok", fecha: new Date().toLocaleString("es-PY") });
+    } catch { setNube((n) => ({ ...n, estado: "error" })); }
+    busyRef.current = false;
+  };
+
   useEffect(() => {
     if (!ready) return;
-    clearTimeout(syncTimer.current);
-    syncTimer.current = setTimeout(() => {
-      setNube((n) => ({ ...n, estado: "subiendo" }));
-      subirNube(db).then(() => setNube({ estado: "ok", fecha: new Date().toLocaleString("es-PY") })).catch(() => setNube((n) => ({ ...n, estado: "error" })));
-    }, 4000);
-    return () => clearTimeout(syncTimer.current);
+    saveDB(db);
+    if (applyingRef.current) { applyingRef.current = false; return; }
+    dirtyRef.current = true;
+    clearTimeout(pushTimer.current);
+    pushTimer.current = setTimeout(empujar, 3000);
+    return () => clearTimeout(pushTimer.current);
   }, [db, ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    pollTimer.current = setInterval(async () => {
+      if (dirtyRef.current || busyRef.current) return;
+      busyRef.current = true;
+      try {
+        const rows = await pullDesde(cursorRef.current);
+        if (rows && rows.length) {
+          const next = aplicarPull(dbRef.current, rows);
+          cursorRef.current = maxCursor(rows);
+          snapRef.current = Object.fromEntries(Object.entries(snapshotDb(next)).map(([k, v]) => [k, v.json]));
+          applyingRef.current = true; setDb(next);
+          setNube({ estado: "ok", fecha: new Date().toLocaleString("es-PY") });
+        }
+      } catch {}
+      busyRef.current = false;
+    }, 15000);
+    return () => clearInterval(pollTimer.current);
+  }, [ready]);
+
   const restaurarNube = async () => {
     try {
-      const row = await bajarNube();
-      if (!row || !row.data) { alert("No hay respaldo en la nube todavía."); return; }
-      if (!confirm(`Restaurar los datos de la nube (última copia: ${row.updated ? new Date(row.updated).toLocaleString("es-PY") : "—"})? Reemplaza los datos actuales de este dispositivo.`)) return;
-      setDb({ ...DB0, ...row.data });
-      alert("Datos restaurados desde la nube.");
-    } catch (e) { alert("No se pudo restaurar: " + e.message); }
+      const rows = await pullDesde(null);
+      if (!rows || !rows.length) { alert("No hay datos en la nube todavía."); return; }
+      if (!confirm("Traer y combinar todos los datos de la nube en este dispositivo?")) return;
+      const next = aplicarPull({ ...DB0 }, rows);
+      cursorRef.current = maxCursor(rows);
+      snapRef.current = Object.fromEntries(Object.entries(snapshotDb(next)).map(([k, v]) => [k, v.json]));
+      dirtyRef.current = false; applyingRef.current = true; setDb(next);
+      setNube({ estado: "ok", fecha: new Date().toLocaleString("es-PY") });
+      alert("Datos actualizados desde la nube.");
+    } catch (e) { alert("No se pudo traer: " + e.message); }
   };
-  const subirNubeManual = async () => {
-    setNube((n) => ({ ...n, estado: "subiendo" }));
-    try { await subirNube(db); setNube({ estado: "ok", fecha: new Date().toLocaleString("es-PY") }); alert("Copia subida a la nube."); }
-    catch (e) { setNube((n) => ({ ...n, estado: "error" })); alert("No se pudo subir: " + e.message); }
-  };
+  const subirNubeManual = async () => { await empujar(); };
   const cloud = { nube, restaurarNube, subirNubeManual };
 
   if (!ready) return <div style={{ background: C.bg, color: C.dim, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>Cargando…</div>;
@@ -1251,12 +1340,12 @@ function Config({ cfg, setCfg, db, setDb, tid, cloud }) {
       {cloud && (() => { const est = cloud.nube.estado; const col = est === "ok" ? C.ok : est === "error" ? C.bad : est === "subiendo" ? C.warn : C.dim; const txt = est === "ok" ? "Sincronizado" : est === "subiendo" ? "Subiendo…" : est === "error" ? "Error al sincronizar" : "En espera"; return (
         <div style={{ ...box, padding: 16, gridColumn: "1 / -1", borderTop: `2px solid ${col}` }}>
           <b>☁ Respaldo en la nube (Supabase)</b>
-          <div style={{ fontSize: 12, color: C.dim, margin: "6px 0 12px" }}>Además del navegador, se guarda una copia automática en la nube. Estado: <b style={{ color: col }}>{txt}</b>{cloud.nube.fecha ? ` · última: ${cloud.nube.fecha}` : ""}.</div>
+          <div style={{ fontSize: 12, color: C.dim, margin: "6px 0 12px" }}>Sincronización por registro: cada cambio se sube solo y se traen los de otros dispositivos cada ~15 seg. Estado: <b style={{ color: col }}>{txt}</b>{cloud.nube.fecha ? ` · última: ${cloud.nube.fecha}` : ""}.</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn kind="acc" onClick={cloud.subirNubeManual}>☁ Subir a la nube ahora</Btn>
-            <Btn kind="ghost" onClick={cloud.restaurarNube}>↓ Restaurar desde la nube</Btn>
+            <Btn kind="acc" onClick={cloud.subirNubeManual}>☁ Subir mis cambios ahora</Btn>
+            <Btn kind="ghost" onClick={cloud.restaurarNube}>↓ Traer datos de la nube</Btn>
           </div>
-          <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>La copia en la nube es única para todo el sistema. "Restaurar" reemplaza los datos de este dispositivo por los de la nube.</div>
+          <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>Editar registros distintos (autos, clientes, ventas) desde varios dispositivos ya no genera conflictos. Solo si dos personas editan el MISMO registro a la vez, prevalece el último guardado.</div>
         </div>
       ); })()}
       <div style={{ ...box, padding: 16, gridColumn: "1 / -1" }}>
