@@ -67,6 +67,11 @@ function aplicarPull(db, rows) {
 const maxCursor = (rows) => rows.length ? rows[rows.length - 1].updated_at : null;
 
 const uid = () => Math.random().toString(36).slice(2, 9);
+async function hashPass(p) {
+  try { const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("mgsalt:" + p)); return "h$" + [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join(""); }
+  catch { return "h$" + p; }
+}
+async function verifyPass(stored, p) { if (!stored) return false; if (stored === p) return true; return stored === await hashPass(p); }
 const tempPass = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 const today = () => new Date().toISOString().slice(0, 10);
 const ahora = () => new Date().toLocaleString("es-PY");
@@ -307,19 +312,17 @@ export default function App() {
 function Login({ db, onDev, onSys }) {
   const [modo, setModo] = useState("sistema");
   const [u, setU] = useState(""); const [p, setP] = useState(""); const [err, setErr] = useState("");
-  const entrar = () => {
+  const entrar = async () => {
     setErr("");
     if (modo === "dev") { if (u === "admin" && p === "99147685") return onDev(); return setErr("Credenciales de desarrollador incorrectas"); }
-    // dueño de empresa (suscriptor)
-    const susc = db.suscriptores.find((x) => x.user === u && x.pass === p);
-    if (susc) {
+    const susc = db.suscriptores.find((x) => x.user === u);
+    if (susc && await verifyPass(susc.pass, p)) {
       if (susc.bloqueado) return setErr("Cuenta bloqueada. Contactá al proveedor del sistema.");
       if (susc.vence && susc.plan !== "Único pago" && susc.vence < today()) return setErr("Membresía vencida. Contactá al proveedor.");
       return onSys({ modo: "sistema", tenantId: susc.id, user: susc.user, nombre: susc.nombre, rol: "admin", permisos: allPerms() }, susc.temp, susc);
     }
-    // funcionario / admin creado en el sistema
-    const us = db.usuarios.find((x) => x.user === u && x.pass === p);
-    if (us) {
+    const us = db.usuarios.find((x) => x.user === u);
+    if (us && await verifyPass(us.pass, p)) {
       if (us.bloqueado) return setErr("Usuario bloqueado por el administrador.");
       const dueno = db.suscriptores.find((s) => s.id === us.tenantId);
       if (dueno && dueno.bloqueado) return setErr("La empresa está bloqueada. Contactá al proveedor.");
@@ -348,10 +351,11 @@ function Login({ db, onDev, onSys }) {
 }
 function CambiarPass({ suscriptor, setDb, onDone }) {
   const [p1, setP1] = useState(""); const [p2, setP2] = useState("");
-  const guardar = () => {
+  const guardar = async () => {
     if (p1.length < 4) return alert("Mínimo 4 caracteres");
     if (p1 !== p2) return alert("Las contraseñas no coinciden");
-    setDb((s) => ({ ...s, suscriptores: s.suscriptores.map((x) => (x.id === suscriptor.id ? { ...x, pass: p1, temp: false } : x)) }));
+    const h = await hashPass(p1);
+    setDb((s) => ({ ...s, suscriptores: s.suscriptores.map((x) => (x.id === suscriptor.id ? { ...x, pass: h, temp: false } : x)) }));
     onDone();
   };
   return (
@@ -376,22 +380,22 @@ function DevApp({ db, setDb, onLogout }) {
   const [creada, setCreada] = useState(null);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const calcVence = (plan, inicio) => { const d = new Date(inicio); if (plan === "Mensual") d.setMonth(d.getMonth() + 1); else if (plan === "Anual") d.setFullYear(d.getFullYear() + 1); else return null; return d.toISOString().slice(0, 10); };
-  const crear = () => {
+  const crear = async () => {
     if (!f.nombre) return alert("Ingresá el nombre de la empresa/cliente");
     const user = (f.user || f.nombre.split(" ")[0].toLowerCase()).replace(/\s/g, "");
     if (!user) return alert("Definí un usuario");
     if (db.suscriptores.some((s) => s.user === user)) return alert("Ese usuario ya existe, elegí otro");
-    const tp = tempPass(); const id = uid();
+    const tp = tempPass(); const id = uid(); const ph = await hashPass(tp);
     setDb((s) => ({
       ...s,
-      suscriptores: [{ id, nombre: f.nombre, whatsapp: f.whatsapp, direccion: f.direccion, user, pass: tp, temp: true, plan: f.plan, monto: +f.monto || 0, moneda: f.moneda, inicio: f.inicio, vence: calcVence(f.plan, f.inicio), bloqueado: false, creado: today() }, ...s.suscriptores],
+      suscriptores: [{ id, nombre: f.nombre, whatsapp: f.whatsapp, direccion: f.direccion, user, pass: ph, temp: true, plan: f.plan, monto: +f.monto || 0, moneda: f.moneda, inicio: f.inicio, vence: calcVence(f.plan, f.inicio), bloqueado: false, creado: today() }, ...s.suscriptores],
       cfgs: { ...s.cfgs, [id]: { ...CFG0, empresa: { nombre: f.nombre, tel: f.whatsapp, dir: f.direccion, ciudad: "", logo: null } } },
     }));
     setCreada({ user, pass: tp });
     setF({ nombre: "", whatsapp: "", direccion: "", user: "", plan: "Mensual", monto: "", moneda: "Gs", inicio: today() });
   };
   const upd = (id, patch) => setDb((s) => ({ ...s, suscriptores: s.suscriptores.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
-  const cambiarClave = (susc) => { const np = prompt("Nueva contraseña para " + susc.nombre + ":"); if (np && np.length >= 4) { upd(susc.id, { pass: np, temp: true }); alert("Contraseña actualizada. El cliente deberá cambiarla al ingresar."); } else if (np) alert("Mínimo 4 caracteres"); };
+  const cambiarClave = async (susc) => { const np = prompt("Nueva contraseña para " + susc.nombre + ":"); if (np && np.length >= 4) { upd(susc.id, { pass: await hashPass(np), temp: true }); alert("Contraseña actualizada. El cliente deberá cambiarla al ingresar."); } else if (np) alert("Mínimo 4 caracteres"); };
   const eliminar = (susc) => { if (confirm(`¿Eliminar a "${susc.nombre}" y TODOS sus datos (autos, clientes, ventas)? No se puede deshacer.`)) setDb((s) => ({ ...s, suscriptores: s.suscriptores.filter((x) => x.id !== susc.id), vehiculos: s.vehiculos.filter((v) => v.tenantId !== susc.id), clientes: s.clientes.filter((c) => c.tenantId !== susc.id), ventas: s.ventas.filter((v) => v.tenantId !== susc.id), usuarios: s.usuarios.filter((u) => u.tenantId !== susc.id) })); };
   const activa = (s) => !s.bloqueado && (s.plan === "Único pago" || !s.vence || s.vence >= today());
   const ingresos = db.suscriptores.filter(activa).reduce((a, s) => a + toGs(s.monto, s.moneda, { cotizacion: 7300 }), 0);
@@ -1332,15 +1336,16 @@ function UsuariosSistema({ db, setDb, tid }) {
   const [f, setF] = useState({ nombre: "", user: "", pass: "", rol: "funcionario", comision: "", permisos: {} });
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const togglePerm = (k) => setF((s) => ({ ...s, permisos: { ...s.permisos, [k]: !s.permisos[k] } }));
-  const crear = () => {
+  const crear = async () => {
     if (!f.nombre || !f.user || !f.pass) return alert("Completá nombre, usuario y contraseña");
     if (db.usuarios.some((u) => u.user === f.user)) return alert("Ese usuario ya existe");
-    setDb((s) => ({ ...s, usuarios: [{ id: uid(), tenantId: tid, nombre: f.nombre, user: f.user, pass: f.pass, rol: f.rol, comision: f.comision === "" ? null : +f.comision, permisos: f.rol === "admin" ? allPerms() : f.permisos, bloqueado: false, creado: today() }, ...s.usuarios] }));
+    const ph = await hashPass(f.pass);
+    setDb((s) => ({ ...s, usuarios: [{ id: uid(), tenantId: tid, nombre: f.nombre, user: f.user, pass: ph, rol: f.rol, comision: f.comision === "" ? null : +f.comision, permisos: f.rol === "admin" ? allPerms() : f.permisos, bloqueado: false, creado: today() }, ...s.usuarios] }));
     setF({ nombre: "", user: "", pass: "", rol: "funcionario", comision: "", permisos: {} });
     alert("Usuario creado. Ya puede ingresar con esa contraseña.");
   };
   const upd = (id, patch) => setDb((s) => ({ ...s, usuarios: s.usuarios.map((u) => (u.id === id ? { ...u, ...patch } : u)) }));
-  const cambiarClave = (u) => { const np = prompt("Nueva contraseña para " + u.nombre + ":"); if (np && np.length >= 4) upd(u.id, { pass: np }); else if (np) alert("Mínimo 4 caracteres"); };
+  const cambiarClave = async (u) => { const np = prompt("Nueva contraseña para " + u.nombre + ":"); if (np && np.length >= 4) upd(u.id, { pass: await hashPass(np) }); else if (np) alert("Mínimo 4 caracteres"); };
   const editComision = (u) => { const c = prompt(`Comisión % para ${u.nombre} (vacío = usar el valor por defecto):`, u.comision ?? ""); if (c === null) return; upd(u.id, { comision: c === "" ? null : +c }); };
   const del = (id) => { if (confirm("¿Eliminar usuario?")) setDb((s) => ({ ...s, usuarios: s.usuarios.filter((u) => u.id !== id) })); };
   return (
