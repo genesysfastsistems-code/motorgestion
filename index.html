@@ -40,53 +40,149 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
    DESARROLLADOR (aparte): crea empresas-cliente, planes, cobros, bloqueo.
    SISTEMA (por empresa): Stock · Clientes · Ventas · Cobranza · IVA · Legal · Ajustes.
    Roles: administrador (todo) y funcionario (permisos elegidos).
-   ⚠ Auth de prototipo (sin cifrado real). Producción: backend.
+   Seguridad: login con Supabase Auth + políticas RLS por empresa (ver supabase-seguridad.sql).
    ============================================================ */
 
-const KEY = "playa_autos_v4";
-async function loadDB() { try { const r = await window.storage.get(KEY); return r ? JSON.parse(r.value) : null; } catch { return null; } }
-async function saveDB(db) { try { await window.storage.set(KEY, JSON.stringify(db)); } catch {} }
+// ---------- Caché local (una por usuario, para no mezclar empresas en un mismo navegador) ----------
+const KEY = "playa_autos_v5";
+let CACHE_KEY = null;
+async function loadDB() { if (!CACHE_KEY) return null; try { const r = await window.storage.get(CACHE_KEY); return r ? JSON.parse(r.value) : null; } catch { return null; } }
+async function saveDB(obj) { if (!CACHE_KEY) return; try { await window.storage.set(CACHE_KEY, JSON.stringify(obj)); } catch {} }
 
-// ---------- Supabase (respaldo en la nube) ----------
+// ---------- Supabase ----------
+// La clave publicable puede ir en el código: la seguridad la dan el login (Supabase Auth) y las políticas RLS.
 const SB_URL = "https://xyrmjbfaakvfnriijiwx.supabase.co";
 const SB_KEY = "sb_publishable_jz-Je03pSDgc4dVtH81ZnQ_e8gMdFxL";
-const SB_ROW = "motorgestion";
-const sbHeaders = { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" };
-async function subirNube(db, updated) {
-  const upd = updated || new Date().toISOString();
-  const body = JSON.stringify([{ id: SB_ROW, data: db, updated: upd }]);
-  const r = await fetch(`${SB_URL}/rest/v1/respaldo?on_conflict=id`, { method: "POST", headers: { ...sbHeaders, Prefer: "resolution=merge-duplicates" }, body });
-  if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 120));
-  return upd;
-}
-async function bajarNube() {
-  const r = await fetch(`${SB_URL}/rest/v1/respaldo?id=eq.${SB_ROW}&select=data,updated`, { headers: sbHeaders });
-  if (!r.ok) throw new Error("HTTP " + r.status);
-  const j = await r.json();
-  return j && j[0] ? j[0] : null;
-}
+const LOGIN_DOMINIO = "motorgestion.app"; // "juan" => juan@motorgestion.app
+const SESS_KEY = "mg_session";
+const normUser = (u) => String(u || "").trim().toLowerCase().replace(/\s+/g, "");
+const aEmail = (u) => { const x = normUser(u); return x.includes("@") ? x : `${x.replace(/[^a-z0-9._-]/g, "-")}@${LOGIN_DOMINIO}`; };
 
-// ---------- Etapa 3: sincronización por registro ----------
+let SB_SESSION = null; // { access_token, refresh_token, expira, user:{id} }
+function guardarSesion(perfil) { try { localStorage.setItem(SESS_KEY, JSON.stringify({ refresh_token: SB_SESSION?.refresh_token, user_id: SB_SESSION?.user?.id, perfil })); } catch {} }
+function sesionGuardada() { try { return JSON.parse(localStorage.getItem(SESS_KEY) || "null"); } catch { return null; } }
+const hdr = (extra) => ({ apikey: SB_KEY, Authorization: "Bearer " + (SB_SESSION?.access_token || SB_KEY), "Content-Type": "application/json", ...(extra || {}) });
+function traducirAuth(j) {
+  const m = (j && (j.error_description || j.msg || j.message || j.error)) || "";
+  if (/invalid login|invalid_grant|credentials/i.test(m)) return "Usuario o contraseña incorrectos";
+  if (/not confirmed/i.test(m)) return "La cuenta no está confirmada. En Supabase desactivá Authentication → 'Confirm email'.";
+  if (/already registered|already exists/i.test(m)) return "Ese usuario ya existe, elegí otro";
+  if (/signups not allowed|signup.*disabled/i.test(m)) return "En Supabase está desactivado el registro de usuarios (Allow new users to sign up).";
+  if (/password/i.test(m) && /6|short|weak/i.test(m)) return "La contraseña debe tener al menos 6 caracteres";
+  if (/rate limit/i.test(m)) return "Demasiados intentos. Esperá unos minutos.";
+  return m || "Error de autenticación";
+}
+async function authToken(grant, body) {
+  const r = await fetch(`${SB_URL}/auth/v1/token?grant_type=${grant}`, { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(traducirAuth(j)); e.auth = true; throw e; }
+  SB_SESSION = { access_token: j.access_token, refresh_token: j.refresh_token, expira: Date.now() + (j.expires_in || 3600) * 1000, user: j.user };
+  return SB_SESSION;
+}
+const authLogin = (usuario, password) => authToken("password", { email: aEmail(usuario), password });
+async function authRefresh() {
+  const rt = SB_SESSION?.refresh_token || sesionGuardada()?.refresh_token;
+  if (!rt) { const e = new Error("Sesión vencida"); e.auth = true; throw e; }
+  const prev = SB_SESSION?.user;
+  await authToken("refresh_token", { refresh_token: rt });
+  if (!SB_SESSION.user && prev) SB_SESSION.user = prev;
+  const s = sesionGuardada(); guardarSesion(s?.perfil || null);
+}
+function authLogout() {
+  const tok = SB_SESSION?.access_token;
+  if (tok) fetch(`${SB_URL}/auth/v1/logout`, { method: "POST", headers: hdr() }).catch(() => {});
+  SB_SESSION = null; CACHE_KEY = null;
+  try { localStorage.removeItem(SESS_KEY); } catch {}
+}
+// fetch a Supabase que renueva el token solo
+async function sbFetch(path, opt = {}) {
+  if (SB_SESSION && SB_SESSION.expira - Date.now() < 120000) { try { await authRefresh(); } catch (e) { if (e.auth) throw e; } }
+  let r = await fetch(SB_URL + path, { ...opt, headers: hdr(opt.headers) });
+  if (r.status === 401 && SB_SESSION) { await authRefresh(); r = await fetch(SB_URL + path, { ...opt, headers: hdr(opt.headers) }); }
+  return r;
+}
+async function sbError(r) {
+  const t = await r.text().catch(() => "");
+  let m = t; try { const j = JSON.parse(t); m = j.message || j.msg || j.hint || t; } catch {}
+  const e = new Error(r.status === 403 || /row-level security|permission|42501|Sin permiso/i.test(m) ? "Sin permiso para esta operación" : `Error ${r.status}: ${String(m).slice(0, 160)}`);
+  e.status = r.status; return e;
+}
+async function authPerfil() {
+  const r = await sbFetch(`/rest/v1/perfiles?user_id=eq.${SB_SESSION.user.id}&select=*`);
+  if (!r.ok) throw await sbError(r);
+  const j = await r.json();
+  return j[0] || null;
+}
+async function rpc(fn, args) {
+  const r = await sbFetch(`/rest/v1/rpc/${fn}`, { method: "POST", body: JSON.stringify(args || {}) });
+  if (!r.ok) throw await sbError(r);
+  const t = await r.text(); return t ? JSON.parse(t) : null;
+}
+// Crea una cuenta en Supabase Auth SIN cerrar la sesión de quien la crea
+async function crearCuenta(usuario, password) {
+  if (!password || password.length < 6) throw new Error("La contraseña debe tener al menos 6 caracteres");
+  const r = await fetch(`${SB_URL}/auth/v1/signup`, { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ email: aEmail(usuario), password }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(traducirAuth(j));
+  const user = j.user || j;
+  if (!user || !user.id || (Array.isArray(user.identities) && user.identities.length === 0)) throw new Error("Ese usuario ya existe, elegí otro");
+  return user.id;
+}
+async function nuevoAcceso({ usuario, password, tenant_id, rol, nombre, permisos }) {
+  const user_id = await crearCuenta(usuario, password);
+  const r = await sbFetch(`/rest/v1/perfiles`, { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ user_id, tenant_id, rol, nombre, usuario: normUser(usuario), email: aEmail(usuario), permisos: permisos || {}, temp: true, bloqueado: false }) });
+  if (!r.ok) throw await sbError(r);
+  return user_id;
+}
+async function actualizarPerfil(userId, patch) {
+  const r = await sbFetch(`/rest/v1/perfiles?user_id=eq.${userId}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(patch) });
+  if (!r.ok) throw await sbError(r);
+}
+const cambiarClaveDe = (userId, clave) => rpc("mg_cambiar_clave", { p_user: userId, p_clave: clave });
+const eliminarAcceso = (userId) => rpc("mg_eliminar_usuario", { p_user: userId });
+
+// ---------- Sincronización por registro ----------
 const SYNC_COLS = ["vehiculos", "clientes", "ventas", "usuarios", "caja", "reservas", "notas", "actividad", "cxp", "papelera", "suscriptores", "pagosSusc"];
+const tenantDe = (col, r) => col === "suscriptores" ? r.id : col === "pagosSusc" ? (r.suscriptorId || null) : (r.tenantId || null);
+function hashStr(str) { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); }
 function snapshotDb(db) {
   const m = {};
-  SYNC_COLS.forEach((col) => (db[col] || []).forEach((r) => { if (r && r.id) m[col + ":" + r.id] = { coleccion: col, tenant_id: r.tenantId || null, data: r, json: JSON.stringify(r) }; }));
-  Object.entries(db.cfgs || {}).forEach(([tid, cfg]) => { m["cfgs:" + tid] = { coleccion: "cfgs", tenant_id: tid, data: cfg, json: JSON.stringify(cfg) }; });
+  SYNC_COLS.forEach((col) => (db[col] || []).forEach((r) => { if (r && r.id) m[col + ":" + r.id] = { coleccion: col, tenant_id: tenantDe(col, r), data: r }; }));
+  Object.entries(db.cfgs || {}).forEach(([tid, cfg]) => { m["cfgs:" + tid] = { coleccion: "cfgs", tenant_id: tid, data: cfg }; });
   return m;
 }
+// snap = { pk: { h: hash del registro, t: tenant } } — lo que ya está en la nube
+function snapDe(db) { const s = {}; for (const [pk, c] of Object.entries(snapshotDb(db))) s[pk] = { h: hashStr(JSON.stringify(c.data)), t: c.tenant_id }; return s; }
 async function pushDiff(prevSnap, db) {
-  const cur = snapshotDb(db); const rows = []; const nuevoSnap = {}; const now = new Date().toISOString();
-  for (const pk in cur) { const c = cur[pk]; nuevoSnap[pk] = c.json; if (prevSnap[pk] !== c.json) rows.push({ pk, coleccion: c.coleccion, tenant_id: c.tenant_id, data: c.data, deleted: false, updated_at: now }); }
-  for (const pk in prevSnap) { if (!(pk in cur)) { const col = pk.slice(0, pk.indexOf(":")); rows.push({ pk, coleccion: col, tenant_id: null, data: null, deleted: true, updated_at: now }); } }
-  if (rows.length) { const r = await fetch(`${SB_URL}/rest/v1/registros?on_conflict=pk`, { method: "POST", headers: { ...sbHeaders, Prefer: "resolution=merge-duplicates" }, body: JSON.stringify(rows) }); if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 120)); }
-  return { snap: nuevoSnap, count: rows.length };
+  const cur = snapshotDb(db); const rows = []; const nuevo = {}; const now = new Date().toISOString();
+  for (const pk in cur) { const c = cur[pk]; const h = hashStr(JSON.stringify(c.data)); nuevo[pk] = { h, t: c.tenant_id }; if (!prevSnap[pk] || prevSnap[pk].h !== h) rows.push({ pk, coleccion: c.coleccion, tenant_id: c.tenant_id, data: c.data, deleted: false, updated_at: now }); }
+  for (const pk in prevSnap) { if (!(pk in cur)) { const col = pk.slice(0, pk.indexOf(":")); rows.push({ pk, coleccion: col, tenant_id: prevSnap[pk].t || null, data: null, deleted: true, updated_at: now }); } }
+  // por colección y en lotes: si el servidor rechaza una colección (sin permiso), no frena al resto
+  const grupos = {}; rows.forEach((r) => { (grupos[r.coleccion] = grupos[r.coleccion] || []).push(r); });
+  const rechazados = [];
+  for (const [col, lote] of Object.entries(grupos)) {
+    for (let i = 0; i < lote.length; i += 300) {
+      const r = await sbFetch(`/rest/v1/registros?on_conflict=pk`, { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(lote.slice(i, i + 300)) });
+      if (!r.ok) { const e = await sbError(r); if (e.status === 403 || e.status === 401 || e.message.startsWith("Sin permiso")) { rechazados.push(col); break; } throw e; }
+    }
+  }
+  return { snap: nuevo, count: rows.length, rechazados };
 }
+// Trae en páginas de 1000 (límite de Supabase). Con cursor, repasa 60 s hacia atrás para no perder registros que se confirmaron tarde.
 async function pullDesde(cursor) {
-  const q = cursor ? `?updated_at=gt.${encodeURIComponent(cursor)}&order=updated_at.asc&limit=8000` : `?order=updated_at.asc&limit=8000`;
-  const r = await fetch(`${SB_URL}/rest/v1/registros${q}`, { headers: sbHeaders });
-  if (!r.ok) throw new Error("HTTP " + r.status);
-  return await r.json();
+  const out = []; const PAGE = 1000; let off = 0;
+  const desde = cursor ? new Date(new Date(cursor).getTime() - 60000).toISOString() : null;
+  const filtro = desde ? `updated_at=gt.${encodeURIComponent(desde)}&` : "";
+  for (;;) {
+    const r = await sbFetch(`/rest/v1/registros?${filtro}select=pk,coleccion,tenant_id,data,deleted,updated_at&order=updated_at.asc,pk.asc&limit=${PAGE}&offset=${off}`);
+    if (!r.ok) throw await sbError(r);
+    const j = await r.json(); out.push(...j);
+    if (j.length < PAGE) break; off += PAGE;
+  }
+  return out;
 }
+// descarta filas que ya tenemos iguales (por el repaso de 60 s)
+function filasNuevas(rows, snap) { return rows.filter((row) => { const s = snap[row.pk]; if (row.deleted) return !!s; return !s || s.h !== hashStr(JSON.stringify(row.data)); }); }
 function aplicarPull(db, rows) {
   const next = { ...db };
   rows.forEach((row) => {
@@ -99,16 +195,15 @@ function aplicarPull(db, rows) {
   });
   return next;
 }
-const maxCursor = (rows) => rows.length ? rows[rows.length - 1].updated_at : null;
+const maxCursor = (rows, prev) => rows.reduce((m, r) => (!m || r.updated_at > m ? r.updated_at : m), prev || null);
 
 const uid = () => Math.random().toString(36).slice(2, 9);
-async function hashPass(p) {
-  try { const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("mgsalt:" + p)); return "h$" + [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join(""); }
-  catch { return "h$" + p; }
-}
-async function verifyPass(stored, p) { if (!stored) return false; if (stored === p) return true; return stored === await hashPass(p); }
-const tempPass = () => Math.random().toString(36).slice(2, 8).toUpperCase();
-const today = () => new Date().toISOString().slice(0, 10);
+// suma meses sin saltar al mes siguiente (31/01 + 1 mes = 28/02 o 29/02)
+const aFecha = (f) => (typeof f === "string" && /^\d{4}-\d{2}-\d{2}$/.test(f)) ? new Date(+f.slice(0, 4), +f.slice(5, 7) - 1, +f.slice(8, 10)) : new Date(f || Date.now());
+function sumarMeses(fecha, n) { const d = aFecha(fecha); const dia = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); const ult = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); d.setDate(Math.min(dia, ult)); return d; }
+const fechaISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const tempPass = () => { const a = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const v = crypto.getRandomValues(new Uint32Array(8)); return [...v].map((x) => a[x % a.length]).join(""); };
+const today = () => fechaISO(new Date()); // fecha local (Paraguay), no UTC
 const ahora = () => new Date().toLocaleString("es-PY");
 const nf = new Intl.NumberFormat("es-PY");
 const money = (v, m) => m === "USD" ? "US$ " + new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(v || 0) : "Gs " + nf.format(Math.round(v || 0));
@@ -150,8 +245,8 @@ function generarPlan(monto, entrega, nCuotas, tasaAnual, fechaBase) {
   const capital = Math.max(0, monto - entrega);
   const i = (tasaAnual / 100) / 12;
   let cuota = i === 0 ? capital / nCuotas : (capital * i) / (1 - Math.pow(1 + i, -nCuotas));
-  const plan = []; const d = new Date(fechaBase || today());
-  for (let k = 1; k <= nCuotas; k++) { const fv = new Date(d); fv.setMonth(fv.getMonth() + k); plan.push({ n: k, venc: fv.toISOString().slice(0, 10), monto: Math.round(cuota), pagado: false, fechaPago: null, moraPagada: 0, diasAtrasoPago: 0 }); }
+  const plan = []; const d = fechaBase || today();
+  for (let k = 1; k <= nCuotas; k++) { const fv = sumarMeses(d, k); plan.push({ n: k, venc: fechaISO(fv), monto: Math.round(cuota), pagado: false, fechaPago: null, moraPagada: 0, diasAtrasoPago: 0 }); }
   return { capital, cuota: Math.round(cuota), plan };
 }
 function deudaVenta(venta, tasaMora, cot) {
@@ -249,51 +344,97 @@ function auditar(setDb, accion, detalle) {
   setDb((s) => ({ ...s, actividad: [{ id: uid(), tenantId: tid, usuario: usuario || "—", accion, detalle: detalle || "", ts: new Date().toISOString() }, ...(s.actividad || [])].slice(0, 3000) }));
 }
 
-const SYNC_ARR = ["vehiculos", "clientes", "ventas", "usuarios", "caja", "reservas", "notas", "actividad", "cxp", "papelera"];
 export default function App() {
   const [db, setDb] = useState(DB0);
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(false);       // datos del usuario cargados
+  const [arranque, setArranque] = useState(true);  // intentando recuperar sesión guardada
   const [auth, setAuth] = useState(null);
-  const [mustChange, setMustChange] = useState(null);
-  const [nube, setNube] = useState({ estado: "idle", fecha: null });
+  const [mustChange, setMustChange] = useState(false);
+  const [msgLogin, setMsgLogin] = useState("");
+  const [nube, setNube] = useState({ estado: "idle", fecha: null, aviso: "" });
   const dbRef = useRef(DB0); dbRef.current = db;
   const dirtyRef = useRef(false);
   const applyingRef = useRef(false);
   const snapRef = useRef({});
   const cursorRef = useRef(null);
   const pushTimer = useRef(); const pollTimer = useRef(); const busyRef = useRef(false);
+  const persistir = (d) => saveDB({ v: 5, db: d || dbRef.current, snap: snapRef.current, cursor: cursorRef.current });
+  const okNube = (aviso) => setNube({ estado: aviso ? "error" : "ok", fecha: new Date().toLocaleString("es-PY"), aviso: aviso || "" });
 
+  // Prepara la sesión: caché local del usuario + cambios pendientes + datos nuevos de la nube
+  const neg = (msg) => { const e = new Error(msg); e.auth = true; return e; };
+  const iniciar = async (perfil, userId, offline) => {
+    if (!perfil) throw neg("Tu cuenta no tiene un perfil asignado. Contactá al proveedor.");
+    if (perfil.bloqueado) throw neg("Usuario bloqueado. Contactá al administrador.");
+    CACHE_KEY = KEY + ":" + userId;
+    const cache = await loadDB();
+    let base = cache && cache.db ? { ...DB0, ...cache.db } : { ...DB0 };
+    snapRef.current = (cache && cache.snap) || {}; cursorRef.current = (cache && cache.cursor) || null;
+    let aviso = "";
+    if (!offline) {
+      try {
+        if (cache && cache.snap) { const res = await pushDiff(snapRef.current, base); snapRef.current = res.snap; if (res.rechazados.length) aviso = "Sin permiso para guardar: " + res.rechazados.join(", "); }
+        const rows = await pullDesde(cursorRef.current);
+        const nuevas = cursorRef.current ? filasNuevas(rows, snapRef.current) : rows;
+        if (!cursorRef.current) base = aplicarPull({ ...DB0 }, rows); else if (nuevas.length) base = aplicarPull(base, nuevas);
+        cursorRef.current = maxCursor(rows, cursorRef.current);
+        snapRef.current = snapDe(base);
+        okNube(aviso);
+      } catch (e) { if (e.auth) throw e; setNube({ estado: "error", fecha: null, aviso: e.message }); }
+    } else setNube({ estado: "error", fecha: null, aviso: "Sin conexión: trabajando con los datos de este dispositivo" });
+    try { if (perfil.rol !== "dev") localStorage.removeItem("playa_autos_v4"); } catch {} // caché vieja con datos de todas las empresas
+    let a;
+    if (perfil.rol === "dev") a = { modo: "dev", nombre: perfil.nombre || perfil.email || "Desarrollador", userId };
+    else {
+      const susc = base.suscriptores.find((s) => s.id === perfil.tenant_id);
+      if (!susc && !offline) throw neg("La empresa de tu cuenta no existe o fue eliminada. Contactá al proveedor.");
+      if (susc && susc.bloqueado) throw neg("Cuenta bloqueada. Contactá al proveedor del sistema.");
+      if (susc && susc.vence && susc.plan !== "Único pago" && susc.vence < today()) throw neg("Membresía vencida. Contactá al proveedor.");
+      const admin = perfil.rol === "admin";
+      a = { modo: "sistema", tenantId: perfil.tenant_id, user: perfil.usuario || perfil.email, nombre: perfil.nombre || (susc && susc.nombre) || perfil.usuario, rol: admin ? "admin" : "funcionario", permisos: admin ? allPerms() : (perfil.permisos || {}), userId };
+    }
+    guardarSesion(perfil);
+    applyingRef.current = true; setDb(base); persistir(base);
+    setMustChange(!!perfil.temp);
+    setAuth(a); setReady(true);
+  };
+
+  const login = async (usuario, clave) => {
+    await authLogin(usuario, clave);
+    const perfil = await authPerfil();
+    try { await iniciar(perfil, SB_SESSION.user.id, false); }
+    catch (e) { authLogout(); throw e; }
+  };
+
+  // Al abrir: recuperar la sesión guardada (o seguir sin internet con la última sesión)
   useEffect(() => {
     (async () => {
-      const local = await loadDB();
-      let base = local ? { ...DB0, ...local } : { ...DB0 };
-      try {
-        const rows = await pullDesde(null);
-        if (rows && rows.length) { base = aplicarPull({ ...DB0 }, rows); cursorRef.current = maxCursor(rows); }
-        snapRef.current = Object.fromEntries(Object.entries(snapshotDb(base)).map(([k, v]) => [k, v.json]));
-        // si la nube está vacía y hay datos locales, subirlos
-        if ((!rows || !rows.length) && local) { const res = await pushDiff({}, base); snapRef.current = res.snap; }
-        setNube({ estado: "ok", fecha: new Date().toLocaleString("es-PY") });
-      } catch { setNube({ estado: "error", fecha: null }); snapRef.current = Object.fromEntries(Object.entries(snapshotDb(base)).map(([k, v]) => [k, v.json])); }
-      applyingRef.current = true; setDb(base);
-      setReady(true);
+      const s = sesionGuardada();
+      if (s && s.refresh_token && s.user_id) {
+        try { await authRefresh(); const perfil = await authPerfil(); await iniciar(perfil, s.user_id, false); }
+        catch (e) {
+          if (!e.auth && e.status === undefined && s.perfil) { SB_SESSION = { refresh_token: s.refresh_token, expira: 0, user: { id: s.user_id } }; try { await iniciar(s.perfil, s.user_id, true); } catch { authLogout(); } }
+          else { authLogout(); setMsgLogin(e.message); }
+        }
+      }
+      setArranque(false);
     })();
   }, []);
 
   const empujar = async () => {
-    if (busyRef.current) return; busyRef.current = true;
+    if (busyRef.current || !SB_SESSION) return; busyRef.current = true;
     setNube((n) => ({ ...n, estado: "subiendo" }));
     try {
       const res = await pushDiff(snapRef.current, dbRef.current);
-      snapRef.current = res.snap; dirtyRef.current = false;
-      setNube({ estado: "ok", fecha: new Date().toLocaleString("es-PY") });
-    } catch { setNube((n) => ({ ...n, estado: "error" })); }
+      snapRef.current = res.snap; dirtyRef.current = false; persistir();
+      okNube(res.rechazados.length ? "Sin permiso para guardar: " + res.rechazados.join(", ") : "");
+    } catch (e) { setNube((n) => ({ ...n, estado: "error", aviso: e.message })); }
     busyRef.current = false;
   };
 
   useEffect(() => {
     if (!ready) return;
-    saveDB(db);
+    persistir(db);
     if (applyingRef.current) { applyingRef.current = false; return; }
     dirtyRef.current = true;
     clearTimeout(pushTimer.current);
@@ -304,105 +445,109 @@ export default function App() {
   useEffect(() => {
     if (!ready) return;
     pollTimer.current = setInterval(async () => {
-      if (dirtyRef.current || busyRef.current) return;
+      if (busyRef.current || !SB_SESSION) return;
+      if (dirtyRef.current) { empujar(); return; } // reintenta lo pendiente (p. ej. al volver internet)
       busyRef.current = true;
       try {
         const rows = await pullDesde(cursorRef.current);
-        if (rows && rows.length) {
-          const next = aplicarPull(dbRef.current, rows);
-          cursorRef.current = maxCursor(rows);
-          snapRef.current = Object.fromEntries(Object.entries(snapshotDb(next)).map(([k, v]) => [k, v.json]));
+        cursorRef.current = maxCursor(rows, cursorRef.current);
+        const nuevas = filasNuevas(rows, snapRef.current);
+        if (nuevas.length && !dirtyRef.current) {
+          const next = aplicarPull(dbRef.current, nuevas);
+          snapRef.current = snapDe(next);
           applyingRef.current = true; setDb(next);
-          setNube({ estado: "ok", fecha: new Date().toLocaleString("es-PY") });
         }
-      } catch {}
+        persistir();
+        setNube((n) => n.estado === "ok" ? n : { estado: "ok", fecha: new Date().toLocaleString("es-PY"), aviso: "" });
+      } catch (e) { if (e.auth) { busyRef.current = false; salir(true); return; } setNube((n) => ({ ...n, estado: "error", aviso: e.message })); }
       busyRef.current = false;
     }, 15000);
     return () => clearInterval(pollTimer.current);
   }, [ready]);
 
   const restaurarNube = async () => {
+    if (dirtyRef.current && !confirm("Hay cambios de este dispositivo que todavía no se subieron y se perderán. ¿Continuar?")) return;
     try {
       const rows = await pullDesde(null);
       if (!rows || !rows.length) { alert("No hay datos en la nube todavía."); return; }
-      if (!confirm("Traer y combinar todos los datos de la nube en este dispositivo?")) return;
+      if (!confirm("¿Reemplazar los datos de este dispositivo por los de la nube?")) return;
       const next = aplicarPull({ ...DB0 }, rows);
       cursorRef.current = maxCursor(rows);
-      snapRef.current = Object.fromEntries(Object.entries(snapshotDb(next)).map(([k, v]) => [k, v.json]));
+      snapRef.current = snapDe(next);
       dirtyRef.current = false; applyingRef.current = true; setDb(next);
-      setNube({ estado: "ok", fecha: new Date().toLocaleString("es-PY") });
+      okNube();
       alert("Datos actualizados desde la nube.");
     } catch (e) { alert("No se pudo traer: " + e.message); }
   };
   const subirNubeManual = async () => { await empujar(); };
   const cloud = { nube, restaurarNube, subirNubeManual };
 
-  if (!ready) return <div style={{ background: C.bg, color: C.dim, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>Cargando…</div>;
-  if (!auth) return <Login db={db} onDev={() => setAuth({ modo: "dev" })} onSys={(a, temp, susc) => { setAuth(a); if (temp) setMustChange(susc); }} cloud={cloud} />;
-  if (mustChange) return <CambiarPass suscriptor={mustChange} setDb={setDb} onDone={() => setMustChange(null)} />;
-  if (auth.modo === "dev") return <DevApp db={db} setDb={setDb} onLogout={() => setAuth(null)} cloud={cloud} />;
-  return <Sistema db={db} setDb={setDb} auth={auth} onLogout={() => setAuth(null)} cloud={cloud} />;
+  const salir = async (vencida) => {
+    clearTimeout(pushTimer.current); clearInterval(pollTimer.current);
+    if (!vencida && dirtyRef.current) await empujar();
+    authLogout();
+    snapRef.current = {}; cursorRef.current = null; dirtyRef.current = false;
+    applyingRef.current = true; setReady(false); setAuth(null); setMustChange(false); setDb(DB0);
+    if (vencida) setMsgLogin("Tu sesión venció o fue bloqueada. Ingresá de nuevo.");
+  };
+
+  if (arranque) return <div style={{ background: C.bg, color: C.dim, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>Cargando…</div>;
+  if (!auth || !ready) return <Login onLogin={login} msg={msgLogin} />;
+  if (mustChange) return <CambiarPass auth={auth} onDone={() => setMustChange(false)} onLogout={() => salir()} />;
+  if (auth.modo === "dev") return <DevApp db={db} setDb={setDb} auth={auth} onLogout={() => salir()} cloud={cloud} />;
+  return <Sistema db={db} setDb={setDb} auth={auth} onLogout={() => salir()} cloud={cloud} />;
 }
 
-function Login({ db, onDev, onSys }) {
-  const [modo, setModo] = useState("sistema");
-  const [u, setU] = useState(""); const [p, setP] = useState(""); const [err, setErr] = useState("");
+function Login({ onLogin, msg }) {
+  const [u, setU] = useState(""); const [p, setP] = useState(""); const [err, setErr] = useState(msg || ""); const [cargando, setCargando] = useState(false);
   const entrar = async () => {
+    if (cargando) return;
     setErr("");
-    if (modo === "dev") { if (u === "admin" && p === "99147685") return onDev(); return setErr("Credenciales de desarrollador incorrectas"); }
-    const susc = db.suscriptores.find((x) => x.user === u);
-    if (susc && await verifyPass(susc.pass, p)) {
-      if (susc.bloqueado) return setErr("Cuenta bloqueada. Contactá al proveedor del sistema.");
-      if (susc.vence && susc.plan !== "Único pago" && susc.vence < today()) return setErr("Membresía vencida. Contactá al proveedor.");
-      return onSys({ modo: "sistema", tenantId: susc.id, user: susc.user, nombre: susc.nombre, rol: "admin", permisos: allPerms() }, susc.temp, susc);
-    }
-    const us = db.usuarios.find((x) => x.user === u);
-    if (us && await verifyPass(us.pass, p)) {
-      if (us.bloqueado) return setErr("Usuario bloqueado por el administrador.");
-      const dueno = db.suscriptores.find((s) => s.id === us.tenantId);
-      if (dueno && dueno.bloqueado) return setErr("La empresa está bloqueada. Contactá al proveedor.");
-      return onSys({ modo: "sistema", tenantId: us.tenantId, user: us.user, nombre: us.nombre, rol: us.rol, permisos: us.rol === "admin" ? allPerms() : (us.permisos || {}) }, false, null);
-    }
-    setErr("Usuario o contraseña incorrectos");
+    if (!u.trim() || !p) return setErr("Ingresá usuario (o email) y contraseña");
+    setCargando(true);
+    try { await onLogin(u, p); }
+    catch (e) { setErr(/failed to fetch|network|load failed/i.test(e.message) ? "Sin conexión a internet" : (e.message || "No se pudo iniciar sesión")); setCargando(false); }
   };
+  const key = (e) => e.key === "Enter" && entrar();
   return (
-    <div style={{ background: BGGRAD, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter, system-ui, sans-serif" }}>
-      <div style={{ ...box, padding: 30, width: 360, boxShadow: "0 20px 60px rgba(0,0,0,.45)" }}>
+    <div style={{ background: BGGRAD, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter, system-ui, sans-serif", padding: 16, boxSizing: "border-box" }}>
+      <div style={{ ...box, padding: 30, width: 360, maxWidth: "100%", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,.45)" }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><Marca size={26} tagline center /></div>
-        <div style={{ textAlign: "center", color: C.dim, fontSize: 12, marginBottom: 16 }}>{modo === "dev" ? "Panel del desarrollador" : "Acceso al sistema"}</div>
-        <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-          <Btn small kind={modo === "sistema" ? "acc" : "ghost"} onClick={() => { setModo("sistema"); setErr(""); }} style={{ flex: 1 }}>Sistema</Btn>
-          <Btn small kind={modo === "dev" ? "dev" : "ghost"} onClick={() => { setModo("dev"); setErr(""); }} style={{ flex: 1 }}>Desarrollador</Btn>
-        </div>
+        <div style={{ textAlign: "center", color: C.dim, fontSize: 12, marginBottom: 18 }}>Acceso al sistema</div>
         <div style={{ display: "grid", gap: 12 }}>
-          <Field label="Usuario"><input style={inp} value={u} onChange={(e) => setU(e.target.value)} onKeyDown={(e) => e.key === "Enter" && entrar()} /></Field>
-          <Field label="Contraseña"><input type="password" style={inp} value={p} onChange={(e) => setP(e.target.value)} onKeyDown={(e) => e.key === "Enter" && entrar()} /></Field>
+          <Field label="Usuario o email"><input style={inp} autoComplete="username" autoCapitalize="none" value={u} onChange={(e) => setU(e.target.value)} onKeyDown={key} /></Field>
+          <Field label="Contraseña"><input type="password" autoComplete="current-password" style={inp} value={p} onChange={(e) => setP(e.target.value)} onKeyDown={key} /></Field>
           {err && <div style={{ color: C.bad, fontSize: 12 }}>{err}</div>}
-          <Btn kind={modo === "dev" ? "dev" : "acc"} onClick={entrar} style={{ marginTop: 6 }}>Ingresar</Btn>
+          <Btn kind="acc" onClick={entrar} style={{ marginTop: 6 }}>{cargando ? "Ingresando…" : "Ingresar"}</Btn>
         </div>
+        <div style={{ color: C.dim, fontSize: 11, marginTop: 14, textAlign: "center" }}>Empresas, funcionarios y desarrollador ingresan por acá.</div>
       </div>
     </div>
   );
 }
-function CambiarPass({ suscriptor, setDb, onDone }) {
-  const [p1, setP1] = useState(""); const [p2, setP2] = useState("");
+function CambiarPass({ auth, onDone, onLogout }) {
+  const [p1, setP1] = useState(""); const [p2, setP2] = useState(""); const [err, setErr] = useState(""); const [cargando, setCargando] = useState(false);
   const guardar = async () => {
-    if (p1.length < 4) return alert("Mínimo 4 caracteres");
-    if (p1 !== p2) return alert("Las contraseñas no coinciden");
-    const h = await hashPass(p1);
-    setDb((s) => ({ ...s, suscriptores: s.suscriptores.map((x) => (x.id === suscriptor.id ? { ...x, pass: h, temp: false } : x)) }));
-    onDone();
+    setErr("");
+    if (p1.length < 6) return setErr("Mínimo 6 caracteres");
+    if (p1 !== p2) return setErr("Las contraseñas no coinciden");
+    setCargando(true);
+    try { await cambiarClaveDe(auth.userId, p1); const s = sesionGuardada(); if (s && s.perfil) guardarSesion({ ...s.perfil, temp: false }); onDone(); }
+    catch (e) { setErr("No se pudo cambiar: " + e.message); }
+    setCargando(false);
   };
   return (
-    <div style={{ background: BGGRAD, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter, system-ui, sans-serif" }}>
-      <div style={{ ...box, padding: 30, width: 360 }}>
+    <div style={{ background: BGGRAD, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter, system-ui, sans-serif", padding: 16, boxSizing: "border-box" }}>
+      <div style={{ ...box, padding: 30, width: 360, maxWidth: "100%", boxSizing: "border-box" }}>
         <div style={{ marginBottom: 12 }}><Marca size={18} /></div>
         <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Cambiá tu contraseña</div>
-        <div style={{ color: C.dim, fontSize: 12, marginBottom: 18 }}>Tu contraseña es temporal. Definí una nueva para empezar a usar tu sistema.</div>
+        <div style={{ color: C.dim, fontSize: 12, marginBottom: 18 }}>Tu contraseña es temporal. Definí una nueva para empezar a usar el sistema.</div>
         <div style={{ display: "grid", gap: 12 }}>
-          <Field label="Nueva contraseña"><input type="password" style={inp} value={p1} onChange={(e) => setP1(e.target.value)} /></Field>
-          <Field label="Repetir contraseña"><input type="password" style={inp} value={p2} onChange={(e) => setP2(e.target.value)} /></Field>
-          <Btn kind="acc" onClick={guardar} style={{ marginTop: 6 }}>Guardar y continuar</Btn>
+          <Field label="Nueva contraseña"><input type="password" autoComplete="new-password" style={inp} value={p1} onChange={(e) => setP1(e.target.value)} /></Field>
+          <Field label="Repetir contraseña"><input type="password" autoComplete="new-password" style={inp} value={p2} onChange={(e) => setP2(e.target.value)} /></Field>
+          {err && <div style={{ color: C.bad, fontSize: 12 }}>{err}</div>}
+          <Btn kind="acc" onClick={guardar} style={{ marginTop: 6 }}>{cargando ? "Guardando…" : "Guardar y continuar"}</Btn>
+          <Btn kind="ghost" onClick={onLogout}>Salir</Btn>
         </div>
       </div>
     </div>
@@ -410,35 +555,56 @@ function CambiarPass({ suscriptor, setDb, onDone }) {
 }
 
 // ============================================================ DESARROLLADOR (app aparte)
-function DevApp({ db, setDb, onLogout }) {
+function DevApp({ db, setDb, auth, onLogout, cloud }) {
   const [f, setF] = useState({ nombre: "", whatsapp: "", direccion: "", user: "", plan: "Mensual", monto: "", moneda: "Gs", inicio: today() });
   const [creada, setCreada] = useState(null);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
-  const calcVence = (plan, inicio) => { const d = new Date(inicio); if (plan === "Mensual") d.setMonth(d.getMonth() + 1); else if (plan === "Anual") d.setFullYear(d.getFullYear() + 1); else return null; return d.toISOString().slice(0, 10); };
+  const calcVence = (plan, inicio) => plan === "Mensual" ? fechaISO(sumarMeses(inicio, 1)) : plan === "Anual" ? fechaISO(sumarMeses(inicio, 12)) : null;
+  const [creando, setCreando] = useState(false);
   const crear = async () => {
+    if (creando) return;
     if (!f.nombre) return alert("Ingresá el nombre de la empresa/cliente");
-    const user = (f.user || f.nombre.split(" ")[0].toLowerCase()).replace(/\s/g, "");
+    const user = normUser(f.user || f.nombre.split(" ")[0]);
     if (!user) return alert("Definí un usuario");
     if (db.suscriptores.some((s) => s.user === user)) return alert("Ese usuario ya existe, elegí otro");
-    const tp = tempPass(); const id = uid(); const ph = await hashPass(tp);
+    const tp = tempPass(); const id = uid();
+    setCreando(true);
+    let authId;
+    try { authId = await nuevoAcceso({ usuario: user, password: tp, tenant_id: id, rol: "admin", nombre: f.nombre }); }
+    catch (e) { setCreando(false); return alert("No se pudo crear el acceso: " + e.message); }
+    setCreando(false);
     setDb((s) => ({
       ...s,
-      suscriptores: [{ id, nombre: f.nombre, whatsapp: f.whatsapp, direccion: f.direccion, user, pass: ph, temp: true, plan: f.plan, monto: +f.monto || 0, moneda: f.moneda, inicio: f.inicio, vence: calcVence(f.plan, f.inicio), bloqueado: false, creado: today() }, ...s.suscriptores],
+      suscriptores: [{ id, nombre: f.nombre, whatsapp: f.whatsapp, direccion: f.direccion, user, authId, plan: f.plan, monto: +f.monto || 0, moneda: f.moneda, inicio: f.inicio, vence: calcVence(f.plan, f.inicio), bloqueado: false, creado: today() }, ...s.suscriptores],
       cfgs: { ...s.cfgs, [id]: { ...CFG0, empresa: { nombre: f.nombre, tel: f.whatsapp, dir: f.direccion, ciudad: "", logo: null } } },
     }));
     setCreada({ user, pass: tp });
     setF({ nombre: "", whatsapp: "", direccion: "", user: "", plan: "Mensual", monto: "", moneda: "Gs", inicio: today() });
   };
   const upd = (id, patch) => setDb((s) => ({ ...s, suscriptores: s.suscriptores.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
-  const cambiarClave = async (susc) => { const np = prompt("Nueva contraseña para " + susc.nombre + ":"); if (np && np.length >= 4) { upd(susc.id, { pass: await hashPass(np), temp: true }); alert("Contraseña actualizada. El cliente deberá cambiarla al ingresar."); } else if (np) alert("Mínimo 4 caracteres"); };
-  const eliminar = (susc) => { if (confirm(`¿Eliminar a "${susc.nombre}" y TODOS sus datos (autos, clientes, ventas)? No se puede deshacer.`)) setDb((s) => ({ ...s, suscriptores: s.suscriptores.filter((x) => x.id !== susc.id), vehiculos: s.vehiculos.filter((v) => v.tenantId !== susc.id), clientes: s.clientes.filter((c) => c.tenantId !== susc.id), ventas: s.ventas.filter((v) => v.tenantId !== susc.id), usuarios: s.usuarios.filter((u) => u.tenantId !== susc.id) })); };
+  // Clave: si la empresa todavía no tiene acceso en la nube (cuentas viejas), se crea; si ya tiene, se cambia.
+  const cambiarClave = async (susc) => {
+    const np = prompt((susc.authId ? "Nueva contraseña temporal para " : "Crear acceso en la nube para ") + susc.nombre + " (mínimo 6 caracteres):", tempPass());
+    if (!np) return; if (np.length < 6) return alert("Mínimo 6 caracteres");
+    try {
+      if (susc.authId) await cambiarClaveDe(susc.authId, np);
+      else { const authId = await nuevoAcceso({ usuario: susc.user, password: np, tenant_id: susc.id, rol: "admin", nombre: susc.nombre }); upd(susc.id, { authId }); }
+      setCreada({ user: susc.user, pass: np });
+    } catch (e) { alert("No se pudo: " + e.message); }
+  };
+  const eliminar = async (susc) => {
+    if (!confirm(`¿Eliminar a "${susc.nombre}" y TODOS sus datos (autos, clientes, ventas, caja, usuarios)? No se puede deshacer.`)) return;
+    try { await rpc("mg_eliminar_empresa", { p_tenant: susc.id }); } catch (e) { if (!confirm("No se pudieron borrar los accesos de la nube (" + e.message + "). ¿Borrar igual los datos?")) return; }
+    const fuera = (arr) => (arr || []).filter((x) => x.tenantId !== susc.id);
+    setDb((s) => { const cfgs = { ...s.cfgs }; delete cfgs[susc.id]; return { ...s, suscriptores: s.suscriptores.filter((x) => x.id !== susc.id), pagosSusc: (s.pagosSusc || []).filter((p) => p.suscriptorId !== susc.id), vehiculos: fuera(s.vehiculos), clientes: fuera(s.clientes), ventas: fuera(s.ventas), usuarios: fuera(s.usuarios), caja: fuera(s.caja), reservas: fuera(s.reservas), notas: fuera(s.notas), actividad: fuera(s.actividad), cxp: fuera(s.cxp), papelera: fuera(s.papelera), cfgs }; });
+  };
   const activa = (s) => !s.bloqueado && (s.plan === "Único pago" || !s.vence || s.vence >= today());
   const ingresos = db.suscriptores.filter(activa).reduce((a, s) => a + toGs(s.monto, s.moneda, { cotizacion: 7300 }), 0);
   const [cobro, setCobro] = useState(null); const [histo, setHisto] = useState(null); const [uso, setUso] = useState(null);
   const pagos = db.pagosSusc || [];
   const pagosDe = (id) => pagos.filter((p) => p.suscriptorId === id).sort((a, b) => b.fecha.localeCompare(a.fecha));
   const cobradoMes = pagos.filter((p) => (p.fecha || "").slice(0, 7) === today().slice(0, 7)).reduce((a, p) => a + toGs(p.monto, p.moneda, { cotizacion: 7300 }), 0);
-  const extenderVence = (s) => { if (s.plan === "Único pago") return s.vence; const base = new Date((s.vence && s.vence >= today()) ? s.vence : today()); if (s.plan === "Mensual") base.setMonth(base.getMonth() + 1); else base.setFullYear(base.getFullYear() + 1); return base.toISOString().slice(0, 10); };
+  const extenderVence = (s) => { if (s.plan === "Único pago") return s.vence; const base = (s.vence && s.vence >= today()) ? s.vence : today(); return fechaISO(sumarMeses(base, s.plan === "Mensual" ? 1 : 12)); };
   const registrarCobro = (susc, datos) => {
     setDb((s) => ({ ...s, pagosSusc: [{ id: uid(), suscriptorId: susc.id, fecha: datos.fecha, monto: +datos.monto || 0, moneda: datos.moneda, concepto: datos.concepto || `Suscripción ${susc.plan}` }, ...(s.pagosSusc || [])], suscriptores: s.suscriptores.map((x) => x.id === susc.id ? { ...x, vence: datos.renovar ? extenderVence(x) : x.vence } : x) }));
     reciboSuscPDF(susc, datos);
@@ -453,7 +619,8 @@ function DevApp({ db, setDb, onLogout }) {
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.dim }}>
           <Btn small kind="ghost" onClick={() => exportarDatos({ empresa: { nombre: "MotorGestion" } }, db, "motorgestion-backup-total")}>Exportar todo</Btn>
           <label style={{ cursor: "pointer" }}><Btn small kind="ghost" onClick={(e) => e.currentTarget.parentElement.querySelector("input").click()}>Importar</Btn><input type="file" accept="application/json" style={{ display: "none" }} onChange={(e) => importarDatos(e.target.files[0], setDb)} /></label>
-          <span>admin</span><Btn small kind="ghost" onClick={onLogout}>Salir</Btn>
+          {cloud && <span title={cloud.nube.aviso || cloud.nube.fecha || ""} onClick={cloud.subirNubeManual} style={{ cursor: "pointer", color: cloud.nube.estado === "error" ? C.bad : cloud.nube.estado === "ok" ? C.ok : C.dim }}>☁ {cloud.nube.estado === "error" ? "Sin conexión" : cloud.nube.estado === "subiendo" ? "Guardando…" : "Nube"}</span>}
+          <span>{auth?.nombre || "Desarrollador"}</span><Btn small kind="ghost" onClick={onLogout}>Salir</Btn>
         </div>
       </div>
       <div style={{ padding: 20, maxWidth: 1100, margin: "0 auto" }}>
@@ -472,11 +639,11 @@ function DevApp({ db, setDb, onLogout }) {
             <Field label="Moneda"><select style={inp} value={f.moneda} onChange={(e) => set("moneda", e.target.value)}><option>Gs</option><option>USD</option></select></Field>
             <Field label="Inicio"><input type="date" style={inp} value={f.inicio} onChange={(e) => set("inicio", e.target.value)} /></Field>
           </div>
-          <div style={{ marginTop: 12 }}><Btn kind="dev" onClick={crear}>Crear empresa + usuario temporal</Btn></div>
+          <div style={{ marginTop: 12 }}><Btn kind="dev" onClick={crear}>{creando ? "Creando acceso…" : "Crear empresa + usuario temporal"}</Btn></div>
         </div>
         {creada && (
           <div style={{ ...box, padding: 14, marginTop: 12, borderColor: C.ok, background: "rgba(46,204,113,.08)" }}>
-            <div style={{ color: C.ok, fontWeight: 700, marginBottom: 6 }}>✓ Empresa creada — entregá estas credenciales</div>
+            <div style={{ color: C.ok, fontWeight: 700, marginBottom: 6 }}>✓ Acceso listo — entregá estas credenciales</div>
             <div style={{ display: "flex", gap: 24 }}><span>Usuario: <b>{creada.user}</b></span><span>Contraseña temporal: <b style={{ color: C.acc }}>{creada.pass}</b></span></div>
             <div style={{ fontSize: 12, color: C.dim, marginTop: 6 }}>Al ingresar al sistema por primera vez, se le pedirá cambiar la contraseña. Su sistema inicia vacío.</div>
           </div>
@@ -488,7 +655,7 @@ function DevApp({ db, setDb, onLogout }) {
             {db.suscriptores.map((s) => (
               <div key={s.id} style={{ ...box, padding: 12, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", opacity: s.bloqueado ? 0.6 : 1 }}>
                 <div style={{ flex: 1, minWidth: 180 }}>
-                  <div style={{ fontWeight: 700 }}>{s.nombre} {s.bloqueado && <span style={{ color: C.bad, fontSize: 12 }}>· BLOQUEADO</span>} {estadoVence(s) && <span style={{ color: estadoVence(s).c, fontSize: 11, fontWeight: 700, marginLeft: 4 }}>· {estadoVence(s).txt}</span>}</div>
+                  <div style={{ fontWeight: 700 }}>{s.nombre} {s.bloqueado && <span style={{ color: C.bad, fontSize: 12 }}>· BLOQUEADO</span>} {estadoVence(s) && <span style={{ color: estadoVence(s).c, fontSize: 11, fontWeight: 700, marginLeft: 4 }}>· {estadoVence(s).txt}</span>}{!s.authId && <span style={{ color: C.warn, fontSize: 11, fontWeight: 700, marginLeft: 4 }}>· SIN ACCESO NUBE (tocá "Crear acceso")</span>}</div>
                   <div style={{ fontSize: 12, color: C.dim }}>@{s.user} · {s.whatsapp || "—"} · Plan {s.plan}{s.vence ? " · vence " + s.vence : ""} · cobrado {money(pagosDe(s.id).reduce((a, p) => a + toGs(p.monto, p.moneda, { cotizacion: 7300 }), 0), "Gs")}</div>
                   <div style={{ fontSize: 11, color: C.dim, marginTop: 2 }}>🚗 {db.vehiculos.filter((v) => v.tenantId === s.id).length}{s.limiteAutos ? "/" + s.limiteAutos : ""} autos · 🧾 {db.ventas.filter((v) => v.tenantId === s.id).length} ventas · 👥 {db.clientes.filter((c) => c.tenantId === s.id).length} clientes · 🔑 {db.usuarios.filter((u) => u.tenantId === s.id).length} usuarios</div>
                 </div>
@@ -502,7 +669,7 @@ function DevApp({ db, setDb, onLogout }) {
                   <Btn small kind="dev" onClick={() => setCobro(s)}>Cobrar / Renovar</Btn>
                   <Btn small kind="ghost" onClick={() => setHisto(s)}>Historial ({pagosDe(s.id).length})</Btn>
                   <Btn small kind="ghost" onClick={() => setUso(s)}>Uso / Plan</Btn>
-                  <Btn small kind="ghost" onClick={() => cambiarClave(s)}>Clave</Btn>
+                  <Btn small kind={s.authId ? "ghost" : "acc"} onClick={() => cambiarClave(s)}>{s.authId ? "Clave" : "Crear acceso"}</Btn>
                   <Btn small kind={s.bloqueado ? "ok" : "ghost"} onClick={() => upd(s.id, { bloqueado: !s.bloqueado })} style={!s.bloqueado ? { color: C.warn, borderColor: C.warn } : {}}>{s.bloqueado ? "Desbloquear" : "Bloquear"}</Btn>
                   <Btn small kind="ghost" onClick={() => eliminar(s)} style={{ color: C.bad, borderColor: C.bad }}>Eliminar</Btn>
                 </div>
@@ -606,11 +773,12 @@ function Sistema({ db, setDb, auth, onLogout, cloud }) {
       <div style={{ padding: 20, maxWidth: 1200, margin: "0 auto" }}>
         {auth.rol === "admin" && (!cfg.ultimoBackup || diasEntre(cfg.ultimoBackup, today()) >= 7) && (
           <div className="noprint" style={{ ...box, borderColor: C.warn, background: "rgba(245,166,35,.08)", padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 13, color: C.warn }}>💾 {cfg.ultimoBackup ? `Tu última copia de seguridad fue el ${cfg.ultimoBackup}.` : "Todavía no descargaste una copia de seguridad."} Los datos viven en este navegador — descargá una copia para no perderlos.</span>
-            <Btn small kind="acc" style={{ marginLeft: "auto" }} onClick={() => { exportarDatos(cfg, db); setCfg({ ...cfg, ultimoBackup: today() }); }}>Descargar copia ahora</Btn>
+            <span style={{ fontSize: 13, color: C.warn }}>💾 {cfg.ultimoBackup ? `Tu última copia de seguridad fue el ${cfg.ultimoBackup}.` : "Todavía no descargaste una copia de seguridad."} Además de la nube, conviene tener una copia propia.</span>
+            <Btn small kind="acc" style={{ marginLeft: "auto" }} onClick={() => { exportarDatos(cfg, { ...sdb, cfgs: { [tid]: cfg } }); setCfg({ ...cfg, ultimoBackup: today() }); }}>Descargar copia ahora</Btn>
           </div>
         )}
         <div className="fade" key={tab}>
+        {TABS.length === 0 && <Empty t="Tu usuario todavía no tiene módulos asignados. Pedile al administrador que te dé permisos." />}
         {tab === "inicio" && puede("inicio") && <Inicio db={sdb} cfg={cfg} ir={setTab} puede={puede} />}
         {tab === "stock" && puede("stock") && <Stock db={sdb} cfg={cfg} addVeh={addVeh} setVeh={setVeh} delVeh={delVeh} vender={(id) => { setVehParaVenta(id); setTab(puede("ventas") ? "ventas" : "stock"); }} openLegal={(id) => { setSelVeh(id); setTab(puede("legal") ? "legal" : "stock"); }} />}
         {tab === "taller" && puede("taller") && <Taller db={sdb} cfg={cfg} setVeh={setVeh} />}
@@ -624,7 +792,7 @@ function Sistema({ db, setDb, auth, onLogout, cloud }) {
         {tab === "reportes" && puede("reportes") && <Reportes db={sdb} cfg={cfg} setDb={setDb} tid={tid} />}
         {tab === "notas" && puede("notas") && <Notas db={sdb} setDb={setDb} tid={tid} />}
         {tab === "legal" && puede("legal") && <Legal db={sdb} cfg={cfg} selVeh={selVeh} setSelVeh={setSelVeh} setVeh={setVeh} />}
-        {tab === "cfg" && auth.rol === "admin" && <Config cfg={cfg} setCfg={setCfg} db={sdb} setDb={setDb} tid={tid} cloud={cloud} />}
+        {tab === "cfg" && auth.rol === "admin" && <Config cfg={cfg} setCfg={setCfg} db={sdb} setDb={setDb} tid={tid} cloud={cloud} auth={auth} />}
         {tab === "log" && auth.rol === "admin" && <Actividad db={sdb} setDb={setDb} />}
         {tab === "papelera" && auth.rol === "admin" && <Papelera db={sdb} setDb={setDb} setVeh={setVeh} />}
         </div>
@@ -1278,7 +1446,7 @@ function CartaOferta({ veh, cfg, l, set, db }) {
 }
 
 // ============================================================ AJUSTES (config + usuarios)
-function Config({ cfg, setCfg, db, setDb, tid, cloud }) {
+function Config({ cfg, setCfg, db, setDb, tid, cloud, auth }) {
   const emp = cfg.empresa || {};
   const setEmp = (patch) => setCfg({ ...cfg, empresa: { ...emp, ...patch } });
   const logoRef = useRef();
@@ -1340,11 +1508,11 @@ function Config({ cfg, setCfg, db, setDb, tid, cloud }) {
           </div>
         </div>
       </div>
-      <div style={{ ...box, padding: 16, gridColumn: "1 / -1" }}><UsuariosSistema db={db} setDb={setDb} tid={tid} /></div>
+      <div style={{ ...box, padding: 16, gridColumn: "1 / -1" }}><UsuariosSistema db={db} setDb={setDb} tid={tid} auth={auth} /></div>
       {cloud && (() => { const est = cloud.nube.estado; const col = est === "ok" ? C.ok : est === "error" ? C.bad : est === "subiendo" ? C.warn : C.dim; const txt = est === "ok" ? "Sincronizado" : est === "subiendo" ? "Subiendo…" : est === "error" ? "Error al sincronizar" : "En espera"; return (
         <div style={{ ...box, padding: 16, gridColumn: "1 / -1", borderTop: `2px solid ${col}` }}>
           <b>☁ Respaldo en la nube (Supabase)</b>
-          <div style={{ fontSize: 12, color: C.dim, margin: "6px 0 12px" }}>Sincronización por registro: cada cambio se sube solo y se traen los de otros dispositivos cada ~15 seg. Estado: <b style={{ color: col }}>{txt}</b>{cloud.nube.fecha ? ` · última: ${cloud.nube.fecha}` : ""}.</div>
+          <div style={{ fontSize: 12, color: C.dim, margin: "6px 0 12px" }}>Sincronización por registro: cada cambio se sube solo y se traen los de otros dispositivos cada ~15 seg. Estado: <b style={{ color: col }}>{txt}</b>{cloud.nube.fecha ? ` · última: ${cloud.nube.fecha}` : ""}.{cloud.nube.aviso ? <span style={{ color: C.bad }}> {cloud.nube.aviso}</span> : null}</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Btn kind="acc" onClick={cloud.subirNubeManual}>☁ Subir mis cambios ahora</Btn>
             <Btn kind="ghost" onClick={cloud.restaurarNube}>↓ Traer datos de la nube</Btn>
@@ -1354,9 +1522,9 @@ function Config({ cfg, setCfg, db, setDb, tid, cloud }) {
       ); })()}
       <div style={{ ...box, padding: 16, gridColumn: "1 / -1" }}>
         <b>Copia de seguridad y exportación</b>
-        <div style={{ fontSize: 12, color: C.dim, margin: "6px 0 12px" }}>Los datos se guardan en este navegador. Descargá una copia periódicamente para no perderlos.</div>
+        <div style={{ fontSize: 12, color: C.dim, margin: "6px 0 12px" }}>Los datos se guardan en la nube y en este dispositivo. Igual conviene descargar una copia periódicamente.</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Btn onClick={() => { exportarDatos(cfg, db); setCfg({ ...cfg, ultimoBackup: today() }); }}>Descargar copia (JSON)</Btn>
+          <Btn onClick={() => { exportarDatos(cfg, { ...db, cfgs: { [tid]: cfg } }); setCfg({ ...cfg, ultimoBackup: today() }); }}>Descargar copia (JSON)</Btn>
           <Btn kind="ghost" onClick={() => exportCSV("clientes", db.clientes.map((c) => ({ nombre: c.nombre, ci: c.ci, tel: c.tel, email: c.email, ciudad: c.ciudad })))}>Exportar clientes (CSV)</Btn>
           <Btn kind="ghost" onClick={() => exportCSV("stock", db.vehiculos.map((v) => ({ marca: v.marca, modelo: v.modelo, anio: v.anio, chapa: v.chapa, estado: v.estado, costo: Math.round(costoTotal(v)), precio: v.precioVenta })))}>Exportar stock (CSV)</Btn>
           <Btn kind="ghost" onClick={() => exportCSV("ventas", db.ventas.map((v) => { const cli = db.clientes.find((c) => c.id === v.clienteId) || {}; return { fecha: v.fecha, tipo: v.tipo || "credito", cliente: cli.nombre, precio: v.precio, moneda: v.moneda, vendedor: v.vendedor || "" }; }))}>Exportar ventas (CSV)</Btn>
@@ -1367,29 +1535,55 @@ function Config({ cfg, setCfg, db, setDb, tid, cloud }) {
     </div>
   );
 }
-function UsuariosSistema({ db, setDb, tid }) {
+function UsuariosSistema({ db, setDb, tid, auth }) {
   const [f, setF] = useState({ nombre: "", user: "", pass: "", rol: "funcionario", comision: "", permisos: {} });
+  const [creando, setCreando] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const togglePerm = (k) => setF((s) => ({ ...s, permisos: { ...s.permisos, [k]: !s.permisos[k] } }));
+  const permisosDe = (rol, p) => rol === "admin" ? allPerms() : (p || {});
   const crear = async () => {
-    if (!f.nombre || !f.user || !f.pass) return alert("Completá nombre, usuario y contraseña");
-    if (db.usuarios.some((u) => u.user === f.user)) return alert("Ese usuario ya existe");
-    const ph = await hashPass(f.pass);
-    setDb((s) => ({ ...s, usuarios: [{ id: uid(), tenantId: tid, nombre: f.nombre, user: f.user, pass: ph, rol: f.rol, comision: f.comision === "" ? null : +f.comision, permisos: f.rol === "admin" ? allPerms() : f.permisos, bloqueado: false, creado: today() }, ...s.usuarios] }));
-    setF({ nombre: "", user: "", pass: "", rol: "funcionario", comision: "", permisos: {} });
-    alert("Usuario creado. Ya puede ingresar con esa contraseña.");
+    if (creando) return;
+    const user = normUser(f.user);
+    if (!f.nombre || !user || !f.pass) return alert("Completá nombre, usuario y contraseña");
+    if (f.pass.length < 6) return alert("La contraseña debe tener al menos 6 caracteres");
+    if (db.usuarios.some((u) => u.user === user)) return alert("Ese usuario ya existe");
+    setCreando(true);
+    try {
+      const authId = await nuevoAcceso({ usuario: user, password: f.pass, tenant_id: tid, rol: f.rol, nombre: f.nombre, permisos: permisosDe(f.rol, f.permisos) });
+      setDb((s) => ({ ...s, usuarios: [{ id: uid(), tenantId: tid, nombre: f.nombre, user, authId, rol: f.rol, comision: f.comision === "" ? null : +f.comision, permisos: permisosDe(f.rol, f.permisos), bloqueado: false, creado: today() }, ...s.usuarios] }));
+      setF({ nombre: "", user: "", pass: "", rol: "funcionario", comision: "", permisos: {} });
+      alert(`Usuario creado. Ingresa con "${user}" y esa contraseña (se le pedirá cambiarla).`);
+    } catch (e) { alert("No se pudo crear: " + e.message); }
+    setCreando(false);
   };
   const upd = (id, patch) => setDb((s) => ({ ...s, usuarios: s.usuarios.map((u) => (u.id === id ? { ...u, ...patch } : u)) }));
-  const cambiarClave = async (u) => { const np = prompt("Nueva contraseña para " + u.nombre + ":"); if (np && np.length >= 4) upd(u.id, { pass: await hashPass(np) }); else if (np) alert("Mínimo 4 caracteres"); };
+  const cambiarClave = async (u) => {
+    const np = prompt((u.authId ? "Nueva contraseña temporal para " : "Crear acceso en la nube para ") + u.nombre + " (mínimo 6 caracteres):", tempPass());
+    if (!np) return; if (np.length < 6) return alert("Mínimo 6 caracteres");
+    try {
+      if (u.authId) await cambiarClaveDe(u.authId, np);
+      else { const authId = await nuevoAcceso({ usuario: u.user, password: np, tenant_id: tid, rol: u.rol === "admin" ? "admin" : "funcionario", nombre: u.nombre, permisos: permisosDe(u.rol, u.permisos) }); upd(u.id, { authId }); }
+      alert(`Listo. Usuario: ${u.user} · Contraseña temporal: ${np}`);
+    } catch (e) { alert("No se pudo: " + e.message); }
+  };
+  const bloquear = async (u) => {
+    try { if (u.authId) await actualizarPerfil(u.authId, { bloqueado: !u.bloqueado }); upd(u.id, { bloqueado: !u.bloqueado }); }
+    catch (e) { alert("No se pudo: " + e.message); }
+  };
   const editComision = (u) => { const c = prompt(`Comisión % para ${u.nombre} (vacío = usar el valor por defecto):`, u.comision ?? ""); if (c === null) return; upd(u.id, { comision: c === "" ? null : +c }); };
-  const del = (id) => { if (confirm("¿Eliminar usuario?")) setDb((s) => ({ ...s, usuarios: s.usuarios.filter((u) => u.id !== id) })); };
+  const del = async (u) => {
+    if (u.authId && u.authId === auth?.userId) return alert("No podés eliminar tu propio usuario");
+    if (!confirm("¿Eliminar usuario? Ya no podrá ingresar.")) return;
+    try { if (u.authId) await eliminarAcceso(u.authId); setDb((s) => ({ ...s, usuarios: s.usuarios.filter((x) => x.id !== u.id) })); }
+    catch (e) { alert("No se pudo eliminar: " + e.message); }
+  };
   return (
     <div>
       <b>Usuarios del sistema (funcionarios / administradores)</b>
       <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr auto auto", gap: 10, marginTop: 12, alignItems: "end" }}>
         <Field label="Nombre del funcionario"><input style={inp} value={f.nombre} onChange={(e) => set("nombre", e.target.value)} /></Field>
         <Field label="Usuario (para ingresar)"><input style={inp} value={f.user} onChange={(e) => set("user", e.target.value)} /></Field>
-        <Field label="Contraseña"><input style={inp} value={f.pass} onChange={(e) => set("pass", e.target.value)} /></Field>
+        <Field label="Contraseña (mín. 6)"><input style={inp} value={f.pass} onChange={(e) => set("pass", e.target.value)} /></Field>
         <Field label="Comisión %"><input type="number" style={{ ...inp, width: 90 }} value={f.comision} onChange={(e) => set("comision", e.target.value)} placeholder="def" /></Field>
         <Field label="Rol"><select style={inp} value={f.rol} onChange={(e) => set("rol", e.target.value)}><option value="funcionario">Funcionario</option><option value="admin">Administrador</option></select></Field>
       </div>
@@ -1399,17 +1593,17 @@ function UsuariosSistema({ db, setDb, tid }) {
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>{PERMS.map(([k, l]) => <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.txt, ...box, padding: "6px 10px" }}><input type="checkbox" checked={!!f.permisos[k]} onChange={() => togglePerm(k)} />{l}</label>)}</div>
         </div>
       ) : <div style={{ marginTop: 10, fontSize: 12, color: C.ok }}>✓ Administrador: todas las funciones activadas (incluye Ajustes).</div>}
-      <div style={{ marginTop: 12 }}><Btn kind="acc" onClick={crear}>Crear usuario</Btn></div>
+      <div style={{ marginTop: 12 }}><Btn kind="acc" onClick={crear}>{creando ? "Creando…" : "Crear usuario"}</Btn></div>
       <div style={{ ...box, overflow: "hidden", marginTop: 14 }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead><tr style={{ background: C.panel2, color: C.dim, textAlign: "left" }}><th style={th}>Nombre</th><th style={th}>Usuario</th><th style={th}>Rol</th><th style={th}>Comisión</th><th style={th}>Permisos</th><th style={th}>Estado</th><th style={th}>Acciones</th></tr></thead>
           <tbody>{db.usuarios.length === 0 ? <tr><td style={td} colSpan={7}><span style={{ color: C.dim }}>Sin usuarios adicionales. El dueño de la empresa siempre es administrador.</span></td></tr> : db.usuarios.map((u) => (
             <tr key={u.id} style={{ borderTop: `1px solid ${C.border}`, opacity: u.bloqueado ? 0.5 : 1 }}>
-              <td style={td}>{u.nombre}</td><td style={td}>{u.user}</td><td style={td}>{u.rol === "admin" ? "Administrador" : "Funcionario"}</td>
+              <td style={td}>{u.nombre}</td><td style={td}>{u.user}{!u.authId && <div style={{ color: C.warn, fontSize: 11 }}>sin acceso nube</div>}</td><td style={td}>{u.rol === "admin" ? "Administrador" : "Funcionario"}</td>
               <td style={td}>{u.comision != null ? u.comision + "%" : <span style={{ color: C.dim }}>por defecto</span>}</td>
               <td style={{ ...td, fontSize: 12, color: C.dim }}>{u.rol === "admin" ? "Todo" : PERMS.filter(([k]) => u.permisos?.[k]).map(([, l]) => l).join(", ") || "—"}</td>
               <td style={{ ...td, color: u.bloqueado ? C.bad : C.ok }}>{u.bloqueado ? "Bloqueado" : "Activo"}</td>
-              <td style={td}><div style={{ display: "flex", gap: 6 }}><Btn small kind="ghost" onClick={() => editComision(u)}>Comisión</Btn><Btn small kind="ghost" onClick={() => cambiarClave(u)}>Clave</Btn><Btn small kind="ghost" onClick={() => upd(u.id, { bloqueado: !u.bloqueado })}>{u.bloqueado ? "Activar" : "Bloquear"}</Btn><Btn small kind="ghost" onClick={() => del(u.id)} style={{ color: C.bad, borderColor: C.bad }}>✕</Btn></div></td>
+              <td style={td}><div style={{ display: "flex", gap: 6 }}><Btn small kind="ghost" onClick={() => editComision(u)}>Comisión</Btn><Btn small kind={u.authId ? "ghost" : "acc"} onClick={() => cambiarClave(u)}>{u.authId ? "Clave" : "Crear acceso"}</Btn><Btn small kind="ghost" onClick={() => bloquear(u)}>{u.bloqueado ? "Activar" : "Bloquear"}</Btn><Btn small kind="ghost" onClick={() => del(u)} style={{ color: C.bad, borderColor: C.bad }}>✕</Btn></div></td>
             </tr>
           ))}</tbody>
         </table>
