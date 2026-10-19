@@ -1,45 +1,49 @@
-# MotorGestión — Publicar en GitHub Pages
+# MotorGestión
 
-Sistema de gestión para playa de venta de autos (stock, ventas, cobranza, caja, reportes y más).
-Es una web autónoma: no necesita compilar. Solo subís estos archivos.
+Sistema de gestión para playas de venta de autos: stock, ventas, cobranza, caja, reportes y más.
+Es una web sin compilación que se publica en GitHub Pages. Los datos se guardan en Supabase.
 
-## Archivos de esta carpeta
-- `index.html` — la aplicación completa
-- `manifest.webmanifest` — para instalarla como app (PWA)
-- `sw.js` — service worker (permite instalarla y cargar más rápido)
-- `icon.svg` — ícono de la app
+## Archivos
+- `index.html`: la aplicación completa (se genera desde `playa-autos.jsx`).
+- `playa-autos.jsx`: el código fuente que se edita.
+- `build.py`: regenera `index.html` después de editar el JSX (`python3 build.py`).
+- `supabase-seguridad.sql`: login y aislamiento por empresa en Supabase.
+- `sw.js`, `manifest.webmanifest`, `icon.svg`: archivos para instalarla como app (PWA).
 
-## Pasos para publicar en GitHub Pages
-1. Entrá a https://github.com y creá una cuenta (si no tenés).
-2. Arriba a la derecha: **+ → New repository**.
-   - Repository name: por ejemplo `motorgestion`
-   - Marcá **Public** y creá el repo.
-3. En el repo nuevo, hacé clic en **Add file → Upload files** y **arrastrá los 4 archivos**
-   (`index.html`, `manifest.webmanifest`, `sw.js`, `icon.svg`). Luego **Commit changes**.
-4. Andá a **Settings** (del repo) → menú lateral **Pages**.
-   - En **Source** elegí **Deploy from a branch**.
-   - En **Branch** elegí **main** y carpeta **/ (root)** → **Save**.
-5. Esperá ~1 minuto. Arriba aparecerá el link, del tipo:
-   **https://TU-USUARIO.github.io/motorgestion/**
-6. ¡Listo! Ese link ya es tu sistema online. Compartilo o abrilo desde cualquier dispositivo.
+## Seguridad (cómo funciona)
+- Todos ingresan con **usuario o email + contraseña**, validados por **Supabase Auth**.
+  - Un usuario sin "@" se convierte internamente en `usuario@motorgestion.app`.
+- Cada cuenta tiene un **perfil** con su empresa (`tenant_id`) y su rol: `dev`, `admin` o `funcionario`.
+- Las **políticas RLS** de Supabase hacen que:
+  - cada empresa lea y escriba **solo sus datos**;
+  - una empresa bloqueada o vencida no acceda a nada;
+  - solo el desarrollador gestione empresas y cobros;
+  - solo el admin de cada empresa cambie Ajustes y usuarios.
+- No hay contraseñas en el código ni en los datos.
+
+## Configurar Supabase (una sola vez)
+1. Supabase → **SQL Editor** → pegar `supabase-seguridad.sql` → **Run**.
+   - Al final debe aparecer tu cuenta con `rol = dev`.
+2. Supabase → **Authentication → Sign In / Providers → Email**:
+   - **Confirm email**: desactivado (los usuarios sin email real no pueden confirmar).
+   - **Allow new users to sign up**: activado (así el sistema crea las cuentas).
+     Quien se registre por fuera no tiene perfil y no ve nada.
+
+## Publicar en GitHub Pages
+- Subir los archivos al repo → **Settings → Pages** → Branch `main`, carpeta `/ (root)`.
+- Las actualizaciones llegan solas: el `sw.js` busca primero la versión nueva.
+
+## Primer ingreso después de la actualización
+- **Desarrollador**: entra con su email de Supabase (ya no existe `admin` fijo).
+- **Empresas creadas antes** aparecen como **"SIN ACCESO NUBE"**:
+  - tocá **Crear acceso** y entregá la contraseña temporal;
+  - al entrar, la empresa la cambia.
+- **Funcionarios creados antes**: el admin de cada empresa toca **Crear acceso** en Ajustes → Usuarios.
 
 ## Instalar como app en el celular
-- Abrí el link en **Chrome (Android)** o **Safari (iPhone)**.
-- Menú del navegador → **"Agregar a pantalla de inicio"** / **"Instalar app"**.
-- Queda como una app con su ícono, a pantalla completa.
+- Abrí el link en Chrome (Android) o Safari (iPhone).
+- En el menú del navegador elegí **Agregar a pantalla de inicio**.
 
-## Acceso
-- **Desarrollador (dueño del sistema):** pestaña *Desarrollador* → usuario `admin` / contraseña `99147685`.
-  Desde ahí creás las empresas-cliente con su usuario y contraseña.
-- **Empresa (playa de autos):** entra con el usuario/contraseña que le diste; la primera vez cambia su clave.
-
-## IMPORTANTE sobre los datos
-- Los datos se guardan **en el navegador de cada dispositivo** (localStorage).
-- **No se comparten** entre celulares/PCs ni hay respaldo en la nube automático.
-- Usá **Ajustes → Descargar copia (JSON)** seguido para no perder información.
-- Para uso multiusuario en tiempo real (varios dispositivos con los mismos datos) hace falta un
-  **backend** (por ejemplo Firebase o Supabase) — es el siguiente paso si lo necesitás.
-
-## Nota
-- Para PDFs, permití las **ventanas emergentes** en el navegador.
-- La cotización por internet depende de la conexión; si falla, cargá el valor manual en Ajustes.
+## Notas
+- Para los PDF, permití las ventanas emergentes.
+- Copia propia: **Ajustes → Descargar copia (JSON)**.
