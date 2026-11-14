@@ -815,7 +815,7 @@ function Sistema({ db, setDb, auth, onLogout, cloud }) {
             <Btn small kind="acc" style={{ marginLeft: "auto" }} onClick={() => { exportarDatos(cfg, { ...sdb, cfgs: { [tid]: cfg } }); setCfg({ ...cfg, ultimoBackup: today() }); }}>Descargar copia ahora</Btn>
           </div>
         )}
-        <div className="fade" key={tab}>
+        <Seguro key={tab}><div className="fade">
         {TABS.length === 0 && <Empty t="Tu usuario todavía no tiene módulos asignados. Pedile al administrador que te dé permisos." />}
         {tab === "inicio" && puede("inicio") && <Inicio db={sdb} cfg={cfg} ir={setTab} puede={puede} />}
         {tab === "stock" && puede("stock") && <Stock db={sdb} cfg={cfg} addVeh={addVeh} setVeh={setVeh} delVeh={delVeh} vender={(id) => { setVehParaVenta(id); setTab(puede("ventas") ? "ventas" : "stock"); }} openLegal={(id) => { setSelVeh(id); setTab(puede("legal") ? "legal" : "stock"); }} />}
@@ -833,7 +833,7 @@ function Sistema({ db, setDb, auth, onLogout, cloud }) {
         {tab === "cfg" && auth.rol === "admin" && <Config cfg={cfg} setCfg={setCfg} db={sdb} setDb={setDb} tid={tid} cloud={cloud} auth={auth} />}
         {tab === "log" && auth.rol === "admin" && <Actividad db={sdb} setDb={setDb} />}
         {tab === "papelera" && auth.rol === "admin" && <Papelera db={sdb} setDb={setDb} setVeh={setVeh} />}
-        </div>
+        </div></Seguro>
       </div>
     </div>
   );
@@ -1699,6 +1699,25 @@ function Conflictos() {
   );
 }
 
+// Si un módulo falla, muestra un aviso en lugar de dejar la pantalla en blanco
+class Seguro extends React.Component {
+  constructor(p) { super(p); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("MotorGestión:", error, info && info.componentStack); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div style={{ ...box, padding: 20, borderColor: C.bad, maxWidth: 560, margin: "30px auto", textAlign: "center" }}>
+        <div style={{ fontSize: 30 }}>⚠</div>
+        <b>Este módulo tuvo un error</b>
+        <div style={{ color: C.dim, fontSize: 12, margin: "8px 0 14px" }}>Tus datos no se perdieron. Probá de nuevo o elegí otro módulo. Si se repite, mandá una captura de este mensaje al soporte.</div>
+        <code style={{ fontSize: 11, color: C.bad, display: "block", marginBottom: 14, wordBreak: "break-all" }}>{String(this.state.error && this.state.error.message || this.state.error)}</code>
+        <Btn kind="acc" onClick={() => this.setState({ error: null })}>Reintentar</Btn>
+      </div>
+    );
+  }
+}
+
 // ============================================================ PDFs / WhatsApp
 function printHTML(html) { const w = window.open("", "_blank"); if (!w) return alert("Permití las ventanas emergentes para generar el PDF."); w.document.write(html); w.document.close(); w.focus(); setTimeout(() => w.print(), 400); }
 const wmHTML = (cfg) => { const l = cfg?.empresa?.logo; return l ? `<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:-1;opacity:.07"><img src="${l}" style="max-width:65%"/></div>` : ""; };
@@ -1976,11 +1995,11 @@ function Reportes({ db, cfg, setDb, tid }) {
   const rankCli = Object.entries(topCli).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const rentAuto = ventasMes.map((v) => { const vh = db.vehiculos.find((x) => x.id === v.vehiculoId) || {}; return { nombre: `${vh.marca || ""} ${vh.modelo || ""} ${vh.anio || ""}`.trim(), m: margen(vh), pct: margenPct(vh) }; }).sort((a, b) => b.m - a.m).slice(0, 6);
   const serieCobros6 = ult6().map((mm) => ({ label: mm.label, value: (db.caja || []).filter((x) => x.tipo === "ingreso" && (x.fecha || "").slice(0, 7) === mm.key).reduce((a, x) => a + (x.monto || 0), 0) }));
-  const serieVend = rank.slice(0, 6).map(([v, d]) => ({ label: (v || "—").slice(0, 7), value: d.monto }));
   const pctDe = (vendedor) => { const u = db.usuarios.find((x) => x.nombre === vendedor || x.user === vendedor); return (u && u.comision != null) ? +u.comision : (+cfg.comision || 0); };
   const ranking = {};
   ventasMes.forEach((v) => { const k = v.vendedor || "—"; ranking[k] = ranking[k] || { n: 0, monto: 0 }; ranking[k].n++; ranking[k].monto += toGs(v.precio, v.moneda, cfg); });
   const rank = Object.entries(ranking).sort((a, b) => b[1].monto - a[1].monto);
+  const serieVend = rank.slice(0, 6).map(([v, d]) => ({ label: (v || "—").slice(0, 7), value: d.monto }));
   const comisiones = rank.map(([v, d]) => { const pct = pctDe(v); return { v, n: d.n, monto: d.monto, pct, comision: Math.round(d.monto * pct / 100) }; });
   const totalComision = comisiones.reduce((a, c) => a + c.comision, 0);
   const pagarComision = (c) => { if (c.comision <= 0) return alert("Sin comisión para pagar."); if (!confirm(`Registrar en Caja el pago de comisión a ${c.v}: ${money(c.comision, "Gs")}?`)) return; setDb((s) => ({ ...s, caja: [{ id: uid(), tenantId: tid, fecha: today(), tipo: "egreso", concepto: `Comisión ${c.v} — ${mes}`, monto: c.comision, moneda: "Gs", auto: true }, ...(s.caja || [])] })); alert("Registrado como egreso en Caja."); };
