@@ -116,22 +116,48 @@ function snapshotDb(db) {
   Object.entries(db.cfgs || {}).forEach(([tid, cfg]) => { m["cfgs:" + tid] = { coleccion: "cfgs", tenant_id: tid, data: cfg }; });
   return m;
 }
-// snap = { pk: { h: hash del registro, t: tenant } } — lo que ya está en la nube
-function snapDe(db) { const s = {}; for (const [pk, c] of Object.entries(snapshotDb(db))) s[pk] = { h: hashStr(JSON.stringify(c.data)), t: c.tenant_id }; return s; }
+// snap = { pk: { h: hash, t: tenant, u: updated_at de la versión de la nube en la que nos basamos } }
+function snapDe(db, prev) { const s = {}; for (const [pk, c] of Object.entries(snapshotDb(db))) { s[pk] = { h: hashStr(JSON.stringify(c.data)), t: c.tenant_id }; const p = prev && prev[pk]; if (p && p.u) s[pk].u = p.u; } return s; }
+const marcarU = (snap, rows) => { rows.forEach((r) => { if (snap[r.pk]) snap[r.pk].u = r.updated_at; }); return snap; };
+const etiquetaReg = (col, d) => { d = d || {}; const n = d.nombre || d.cliente || [d.marca, d.modelo].filter(Boolean).join(" ") || d.concepto || d.titulo || d.texto || ""; const t = { vehiculos: "Vehículo", clientes: "Cliente", ventas: "Venta", caja: "Movimiento de caja", reservas: "Reserva", notas: "Nota", cxp: "Cuenta por pagar", cfgs: "Ajustes", usuarios: "Usuario", suscriptores: "Empresa", pagosSusc: "Pago de membresía" }[col] || col; return (t + " " + String(n).slice(0, 40)).trim(); };
+// Versiones locales que perdieron contra un cambio simultáneo de otro usuario (se guardan para poder recuperarlas)
+function guardarConflictos(lista) { try { const prev = JSON.parse(localStorage.getItem("mg_conflictos") || "[]"); const nuevos = lista.map((c) => ({ fecha: new Date().toLocaleString("es-PY"), pk: c.srv.pk, coleccion: c.srv.coleccion, etiqueta: etiquetaReg(c.srv.coleccion, c.local || c.srv.data), local: c.local, nube: c.srv.deleted ? null : c.srv.data })); localStorage.setItem("mg_conflictos", JSON.stringify([...nuevos, ...prev].slice(0, 30))); window.dispatchEvent(new Event("mg-conflictos")); } catch {} }
+const textoConflictos = (lista) => lista.length === 1 ? `«${etiquetaReg(lista[0].srv.coleccion, lista[0].local || lista[0].srv.data)}» fue modificado por otro usuario al mismo tiempo: se conservó su versión.` : `${lista.length} registros fueron modificados por otros usuarios al mismo tiempo: se conservaron sus versiones.`;
+function leerConflictos() { try { return JSON.parse(localStorage.getItem("mg_conflictos") || "[]"); } catch { return []; } }
 async function pushDiff(prevSnap, db) {
   const cur = snapshotDb(db); const rows = []; const nuevo = {}; const now = new Date().toISOString();
-  for (const pk in cur) { const c = cur[pk]; const h = hashStr(JSON.stringify(c.data)); nuevo[pk] = { h, t: c.tenant_id }; if (!prevSnap[pk] || prevSnap[pk].h !== h) rows.push({ pk, coleccion: c.coleccion, tenant_id: c.tenant_id, data: c.data, deleted: false, updated_at: now }); }
+  for (const pk in cur) { const c = cur[pk]; const h = hashStr(JSON.stringify(c.data)); nuevo[pk] = { h, t: c.tenant_id }; if (prevSnap[pk] && prevSnap[pk].u) nuevo[pk].u = prevSnap[pk].u; if (!prevSnap[pk] || prevSnap[pk].h !== h) rows.push({ pk, coleccion: c.coleccion, tenant_id: c.tenant_id, data: c.data, deleted: false, updated_at: now }); }
   for (const pk in prevSnap) { if (!(pk in cur)) { const col = pk.slice(0, pk.indexOf(":")); rows.push({ pk, coleccion: col, tenant_id: prevSnap[pk].t || null, data: null, deleted: true, updated_at: now }); } }
+  // Conflictos: si otro usuario cambió el registro en la nube después de nuestra última lectura, gana su versión
+  const conflictos = []; const enConflicto = new Set();
+  const revisar = rows.filter((r) => prevSnap[r.pk] && prevSnap[r.pk].u);
+  for (let i = 0; i < revisar.length; i += 60) {
+    const lista = revisar.slice(i, i + 60).map((r) => '"' + r.pk.replace(/"/g, "") + '"').join(",");
+    const res = await sbFetch(`/rest/v1/registros?pk=in.(${encodeURIComponent(lista)})&select=pk,coleccion,tenant_id,data,deleted,updated_at`);
+    if (!res.ok) throw await sbError(res);
+    for (const srv of await res.json()) {
+      const base = prevSnap[srv.pk];
+      if (base && base.u && srv.updated_at > base.u) {
+        enConflicto.add(srv.pk); conflictos.push({ srv, local: cur[srv.pk] ? cur[srv.pk].data : null });
+        if (srv.deleted) delete nuevo[srv.pk]; else nuevo[srv.pk] = { h: hashStr(JSON.stringify(srv.data)), t: srv.tenant_id, u: srv.updated_at };
+      }
+    }
+  }
+  const aSubir = rows.filter((r) => !enConflicto.has(r.pk));
   // por colección y en lotes: si el servidor rechaza una colección (sin permiso), no frena al resto
-  const grupos = {}; rows.forEach((r) => { (grupos[r.coleccion] = grupos[r.coleccion] || []).push(r); });
+  const grupos = {}; aSubir.forEach((r) => { (grupos[r.coleccion] = grupos[r.coleccion] || []).push(r); });
   const rechazados = [];
   for (const [col, lote] of Object.entries(grupos)) {
     for (let i = 0; i < lote.length; i += 300) {
-      const r = await sbFetch(`/rest/v1/registros?on_conflict=pk`, { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(lote.slice(i, i + 300)) });
+      const parte = lote.slice(i, i + 300);
+      const r = await sbFetch(`/rest/v1/registros?on_conflict=pk&select=pk,updated_at`, { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=representation" }, body: JSON.stringify(parte) });
       if (!r.ok) { const e = await sbError(r); if (e.status === 403 || e.status === 401 || e.message.startsWith("Sin permiso")) { rechazados.push(col); break; } throw e; }
+      const vuelta = await r.json().catch(() => null); const us = {};
+      if (Array.isArray(vuelta)) vuelta.forEach((x) => { us[x.pk] = x.updated_at; });
+      parte.forEach((x) => { if (nuevo[x.pk]) { if (us[x.pk]) nuevo[x.pk].u = us[x.pk]; else delete nuevo[x.pk].u; } });
     }
   }
-  return { snap: nuevo, count: rows.length, rechazados };
+  return { snap: nuevo, count: aSubir.length, rechazados, conflictos };
 }
 // Trae en páginas de 1000 (límite de Supabase). Con cursor, repasa 60 s hacia atrás para no perder registros que se confirmaron tarde.
 async function pullDesde(cursor) {
@@ -319,6 +345,7 @@ export default function App() {
   const [nube, setNube] = useState({ estado: "idle", fecha: null, aviso: "" });
   const dbRef = useRef(DB0); dbRef.current = db;
   const dirtyRef = useRef(false);
+  const editRef = useRef(0); // cuenta los cambios locales (para no perder los que se hacen mientras se sube)
   const applyingRef = useRef(false);
   const snapRef = useRef({});
   const cursorRef = useRef(null);
@@ -338,12 +365,16 @@ export default function App() {
     let aviso = "";
     if (!offline) {
       try {
-        if (cache && cache.snap) { const res = await pushDiff(snapRef.current, base); snapRef.current = res.snap; if (res.rechazados.length) aviso = "Sin permiso para guardar: " + res.rechazados.join(", "); }
+        if (cache && cache.snap) {
+          const res = await pushDiff(snapRef.current, base); snapRef.current = res.snap;
+          if (res.rechazados.length) aviso = "Sin permiso para guardar: " + res.rechazados.join(", ");
+          if (res.conflictos.length) { guardarConflictos(res.conflictos); base = aplicarPull(base, res.conflictos.map((c) => c.srv)); aviso = textoConflictos(res.conflictos); }
+        }
         const rows = await pullDesde(cursorRef.current);
         const nuevas = cursorRef.current ? filasNuevas(rows, snapRef.current) : rows;
         if (!cursorRef.current) base = aplicarPull({ ...DB0 }, rows); else if (nuevas.length) base = aplicarPull(base, nuevas);
         cursorRef.current = maxCursor(rows, cursorRef.current);
-        snapRef.current = snapDe(base);
+        snapRef.current = marcarU(snapDe(base, snapRef.current), rows);
         okNube(aviso);
       } catch (e) { if (e.auth) throw e; setNube({ estado: "error", fecha: null, aviso: e.message }); }
     } else setNube({ estado: "error", fecha: null, aviso: "Sin conexión: trabajando con los datos de este dispositivo" });
@@ -389,9 +420,16 @@ export default function App() {
   const empujar = async () => {
     if (busyRef.current || !SB_SESSION) return; busyRef.current = true;
     setNube((n) => ({ ...n, estado: "subiendo" }));
+    const ver = editRef.current;
     try {
       const res = await pushDiff(snapRef.current, dbRef.current);
-      snapRef.current = res.snap; dirtyRef.current = false; persistir();
+      snapRef.current = res.snap; dirtyRef.current = editRef.current !== ver;
+      if (res.conflictos.length) {
+        guardarConflictos(res.conflictos);
+        applyingRef.current = true; setDb(aplicarPull(dbRef.current, res.conflictos.map((c) => c.srv)));
+        alert(textoConflictos(res.conflictos) + "\n\nTu versión quedó guardada en Ajustes → Nube → Conflictos.");
+      }
+      persistir();
       okNube(res.rechazados.length ? "Sin permiso para guardar: " + res.rechazados.join(", ") : "");
     } catch (e) { setNube((n) => ({ ...n, estado: "error", aviso: e.message })); }
     busyRef.current = false;
@@ -401,7 +439,7 @@ export default function App() {
     if (!ready) return;
     persistir(db);
     if (applyingRef.current) { applyingRef.current = false; return; }
-    dirtyRef.current = true;
+    dirtyRef.current = true; editRef.current++;
     clearTimeout(pushTimer.current);
     pushTimer.current = setTimeout(empujar, 3000);
     return () => clearTimeout(pushTimer.current);
@@ -415,13 +453,14 @@ export default function App() {
       busyRef.current = true;
       try {
         const rows = await pullDesde(cursorRef.current);
-        cursorRef.current = maxCursor(rows, cursorRef.current);
         const nuevas = filasNuevas(rows, snapRef.current);
-        if (nuevas.length && !dirtyRef.current) {
+        if (nuevas.length && dirtyRef.current) { busyRef.current = false; return; } // hay cambios locales: primero se suben, después se vuelve a leer
+        cursorRef.current = maxCursor(rows, cursorRef.current);
+        if (nuevas.length) {
           const next = aplicarPull(dbRef.current, nuevas);
-          snapRef.current = snapDe(next);
+          snapRef.current = marcarU(snapDe(next, snapRef.current), rows);
           applyingRef.current = true; setDb(next);
-        }
+        } else marcarU(snapRef.current, rows);
         persistir();
         setNube((n) => n.estado === "ok" ? n : { estado: "ok", fecha: new Date().toLocaleString("es-PY"), aviso: "" });
       } catch (e) { if (e.auth) { busyRef.current = false; salir(true); return; } setNube((n) => ({ ...n, estado: "error", aviso: e.message })); }
@@ -438,7 +477,7 @@ export default function App() {
       if (!confirm("¿Reemplazar los datos de este dispositivo por los de la nube?")) return;
       const next = aplicarPull({ ...DB0 }, rows);
       cursorRef.current = maxCursor(rows);
-      snapRef.current = snapDe(next);
+      snapRef.current = marcarU(snapDe(next), rows);
       dirtyRef.current = false; applyingRef.current = true; setDb(next);
       okNube();
       alert("Datos actualizados desde la nube.");
@@ -1482,7 +1521,8 @@ function Config({ cfg, setCfg, db, setDb, tid, cloud, auth }) {
             <Btn kind="acc" onClick={cloud.subirNubeManual}>☁ Subir mis cambios ahora</Btn>
             <Btn kind="ghost" onClick={cloud.restaurarNube}>↓ Traer datos de la nube</Btn>
           </div>
-          <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>Editar registros distintos (autos, clientes, ventas) desde varios dispositivos ya no genera conflictos. Solo si dos personas editan el MISMO registro a la vez, prevalece el último guardado.</div>
+          <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>Si dos personas editan el MISMO registro a la vez, se conserva el que llegó primero a la nube y se avisa al otro. La versión que no se guardó queda abajo, en Conflictos.</div>
+          <Conflictos />
         </div>
       ); })()}
       <div style={{ ...box, padding: 16, gridColumn: "1 / -1" }}>
@@ -1535,6 +1575,15 @@ function UsuariosSistema({ db, setDb, tid, auth }) {
     try { if (u.authId) await actualizarPerfil(u.authId, { bloqueado: !u.bloqueado }); upd(u.id, { bloqueado: !u.bloqueado }); }
     catch (e) { alert("No se pudo: " + e.message); }
   };
+  const [editando, setEditando] = useState(null); // { id, rol, permisos }
+  const guardarPermisos = async () => {
+    const u = db.usuarios.find((x) => x.id === editando.id); if (!u) return setEditando(null);
+    const permisos = permisosDe(editando.rol, editando.permisos);
+    try {
+      if (u.authId) await actualizarPerfil(u.authId, { rol: editando.rol, permisos });
+      upd(u.id, { rol: editando.rol, permisos }); setEditando(null);
+    } catch (e) { alert("No se pudo guardar: " + e.message); }
+  };
   const editComision = (u) => { const c = prompt(`Comisión % para ${u.nombre} (vacío = usar el valor por defecto):`, u.comision ?? ""); if (c === null) return; upd(u.id, { comision: c === "" ? null : +c }); };
   const del = async (u) => {
     if (u.authId && u.authId === auth?.userId) return alert("No podés eliminar tu propio usuario");
@@ -1568,11 +1617,50 @@ function UsuariosSistema({ db, setDb, tid, auth }) {
               <td style={td}>{u.comision != null ? u.comision + "%" : <span style={{ color: C.dim }}>por defecto</span>}</td>
               <td style={{ ...td, fontSize: 12, color: C.dim }}>{u.rol === "admin" ? "Todo" : PERMS.filter(([k]) => u.permisos?.[k]).map(([, l]) => l).join(", ") || "—"}</td>
               <td style={{ ...td, color: u.bloqueado ? C.bad : C.ok }}>{u.bloqueado ? "Bloqueado" : "Activo"}</td>
-              <td style={td}><div style={{ display: "flex", gap: 6 }}><Btn small kind="ghost" onClick={() => editComision(u)}>Comisión</Btn><Btn small kind={u.authId ? "ghost" : "acc"} onClick={() => cambiarClave(u)}>{u.authId ? "Clave" : "Crear acceso"}</Btn><Btn small kind="ghost" onClick={() => bloquear(u)}>{u.bloqueado ? "Activar" : "Bloquear"}</Btn><Btn small kind="ghost" onClick={() => del(u)} style={{ color: C.bad, borderColor: C.bad }}>✕</Btn></div></td>
+              <td style={td}><div style={{ display: "flex", gap: 6 }}><Btn small kind="ghost" onClick={() => setEditando({ id: u.id, rol: u.rol === "admin" ? "admin" : "funcionario", permisos: { ...(u.permisos || {}) } })}>Permisos</Btn><Btn small kind="ghost" onClick={() => editComision(u)}>Comisión</Btn><Btn small kind={u.authId ? "ghost" : "acc"} onClick={() => cambiarClave(u)}>{u.authId ? "Clave" : "Crear acceso"}</Btn><Btn small kind="ghost" onClick={() => bloquear(u)}>{u.bloqueado ? "Activar" : "Bloquear"}</Btn><Btn small kind="ghost" onClick={() => del(u)} style={{ color: C.bad, borderColor: C.bad }}>✕</Btn></div></td>
             </tr>
           ))}</tbody>
         </table>
       </div>
+      {editando && (() => { const u = db.usuarios.find((x) => x.id === editando.id); return (
+        <div style={{ ...box, padding: 14, marginTop: 12, borderColor: C.acc }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            <b>Permisos de {u ? u.nombre : ""}</b>
+            <select style={{ ...inp, width: "auto" }} value={editando.rol} onChange={(e) => setEditando({ ...editando, rol: e.target.value })}><option value="funcionario">Funcionario</option><option value="admin">Administrador</option></select>
+          </div>
+          {editando.rol === "funcionario"
+            ? <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>{PERMS.map(([k, l]) => <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.txt, ...box, padding: "6px 10px" }}><input type="checkbox" checked={!!editando.permisos[k]} onChange={() => setEditando({ ...editando, permisos: { ...editando.permisos, [k]: !editando.permisos[k] } })} />{l}</label>)}</div>
+            : <div style={{ fontSize: 12, color: C.ok }}>✓ Administrador: todas las funciones activadas (incluye Ajustes).</div>}
+          {u && !u.authId && <div style={{ fontSize: 12, color: C.warn, marginTop: 8 }}>Este usuario todavía no tiene acceso en la nube: los permisos se aplicarán cuando le crees el acceso.</div>}
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}><Btn kind="acc" onClick={guardarPermisos}>Guardar permisos</Btn><Btn kind="ghost" onClick={() => setEditando(null)}>Cancelar</Btn></div>
+          <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>El cambio se aplica en el servidor al instante; el funcionario verá sus módulos nuevos la próxima vez que ingrese.</div>
+        </div>
+      ); })()}
+    </div>
+  );
+}
+
+function Conflictos() {
+  const [lista, setLista] = useState(leerConflictos);
+  const [abierto, setAbierto] = useState(false);
+  useEffect(() => { const f = () => setLista(leerConflictos()); window.addEventListener("mg-conflictos", f); return () => window.removeEventListener("mg-conflictos", f); }, []);
+  if (!lista.length) return null;
+  const descargar = () => { const b = new Blob([JSON.stringify(lista, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "conflictos-motorgestion.json"; a.click(); };
+  const limpiar = () => { if (!confirm("¿Borrar la lista de conflictos de este dispositivo?")) return; try { localStorage.removeItem("mg_conflictos"); } catch {} setLista([]); };
+  return (
+    <div style={{ marginTop: 12, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <b style={{ color: C.warn, fontSize: 13 }}>⚠ Conflictos ({lista.length})</b>
+        <Btn small kind="ghost" onClick={() => setAbierto(!abierto)}>{abierto ? "Ocultar" : "Ver"}</Btn>
+        <Btn small kind="ghost" onClick={descargar}>Descargar</Btn>
+        <Btn small kind="ghost" onClick={limpiar}>Limpiar</Btn>
+      </div>
+      {abierto && <div style={{ display: "grid", gap: 6, marginTop: 8 }}>{lista.map((c, i) => (
+        <div key={i} style={{ ...box, padding: "8px 10px", fontSize: 12 }}>
+          <b>{c.etiqueta}</b> <span style={{ color: C.dim }}>· {c.fecha}</span>
+          <div style={{ color: C.dim, marginTop: 4 }}>Se conservó la versión de la nube. Tu versión (no guardada): <code style={{ fontSize: 11, wordBreak: "break-all" }}>{JSON.stringify(c.local).slice(0, 300)}</code></div>
+        </div>
+      ))}</div>}
     </div>
   );
 }

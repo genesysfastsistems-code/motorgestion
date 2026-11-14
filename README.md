@@ -7,7 +7,8 @@ Es una web sin compilación que se publica en GitHub Pages. Los datos se guardan
 - `index.html`: la aplicación completa (se genera desde `playa-autos.jsx`).
 - `playa-autos.jsx`: el código fuente que se edita.
 - `build.py`: regenera `index.html` después de editar el JSX (`python3 build.py`).
-- `supabase-seguridad.sql`: login y aislamiento por empresa en Supabase.
+- `supabase-seguridad.sql`: login y aislamiento por empresa en Supabase (incluye los permisos por módulo).
+- `supabase-permisos.sql`: solo la mejora de permisos por módulo, para bases que ya tenían `supabase-seguridad.sql`.
 - `sw.js`, `manifest.webmanifest`, `icon.svg`: archivos para instalarla como app (PWA).
 
 ## Seguridad (cómo funciona)
@@ -18,7 +19,8 @@ Es una web sin compilación que se publica en GitHub Pages. Los datos se guardan
   - cada empresa lea y escriba **solo sus datos**;
   - una empresa bloqueada o vencida no acceda a nada;
   - solo el desarrollador gestione empresas y cobros;
-  - solo el admin de cada empresa cambie Ajustes y usuarios.
+  - solo el admin de cada empresa cambie Ajustes y usuarios;
+  - cada funcionario solo pueda guardar en los módulos que tiene tildados.
 - No hay contraseñas en el código ni en los datos.
 
 ## Configurar Supabase (una sola vez)
@@ -39,6 +41,14 @@ Es una web sin compilación que se publica en GitHub Pages. Los datos se guardan
   - tocá **Crear acceso** y entregá la contraseña temporal;
   - al entrar, la empresa la cambia.
 - **Funcionarios creados antes**: el admin de cada empresa toca **Crear acceso** en Ajustes → Usuarios.
+
+## Cambios simultáneos
+- Si dos personas editan el **mismo** registro a la vez, se conserva el que llegó primero a la nube.
+- Al otro le aparece un aviso, y su versión queda en **Ajustes → Nube → Conflictos** (se puede descargar).
+
+## Carga rápida
+- La primera vez (o después de una actualización) la app se prepara y guarda lista para usar.
+- Las siguientes veces abre directo, sin volver a descargar el compilador.
 
 ## Instalar como app en el celular
 - Abrí el link en Chrome (Android) o Safari (iPhone).
