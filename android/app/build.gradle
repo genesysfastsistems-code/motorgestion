@@ -1,0 +1,52 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Datos de la clave de firma (keystore.properties, NO subir a GitHub)
+def ksProps = new Properties()
+def ksFile = rootProject.file('keystore.properties')
+if (ksFile.exists()) ksProps.load(new FileInputStream(ksFile))
+
+android {
+    namespace 'com.kevanix.motorgestion'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.kevanix.motorgestion'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+    }
+
+    signingConfigs {
+        if (ksFile.exists()) {
+            motor {
+                storeFile rootProject.file(ksProps['storeFile'])
+                storePassword ksProps['storePassword']
+                keyAlias ksProps['keyAlias']
+                keyPassword ksProps['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (ksFile.exists()) signingConfig signingConfigs.motor
+        }
+        debug {
+            // misma clave que release: así la app abre a pantalla completa (sin barra de dirección)
+            if (ksFile.exists()) signingConfig signingConfigs.motor
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+}

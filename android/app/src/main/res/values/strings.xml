@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MotorGestión</string>
+    <string name="launch_url">https://motorgestion.kevanix.com/</string>
+    <string name="provider_authority">com.kevanix.motorgestion.fileprovider</string>
+    <string name="asset_statements" translatable="false">[{ \"relation\": [\"delegate_permission/common.handle_all_urls\"], \"target\": { \"namespace\": \"web\", \"site\": \"https://motorgestion.kevanix.com\" } }]</string>
+</resources>
