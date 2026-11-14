@@ -1,0 +1,42 @@
+name: Compilar APK
+on:
+  push:
+    branches: [android]
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compilar
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --stacktrace --no-daemon
+      - name: Alinear
+        run: |
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -p -f 4 android/app/build/outputs/apk/release/app-release-unsigned.apk motorgestion-sin-firmar.apk
+          "$BT/zipalign" -c 4 motorgestion-sin-firmar.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: motorgestion-sin-firmar
+          path: motorgestion-sin-firmar.apk
+      - name: Guardar en la rama apk-build
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          mkdir -p /tmp/out && cp motorgestion-sin-firmar.apk /tmp/out/
+          git checkout --orphan apk-build
+          git rm -rf --cached . -q
+          rm -rf android .github
+          cp /tmp/out/motorgestion-sin-firmar.apk .
+          git add motorgestion-sin-firmar.apk
+          git commit -q -m "APK sin firmar de ${GITHUB_SHA}"
+          git push -f origin apk-build
