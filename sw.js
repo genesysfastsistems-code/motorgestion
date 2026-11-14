@@ -1,8 +1,8 @@
 // MotorGestión — service worker
 // HTML: primero la red (así cada actualización llega sola) y, sin internet, la copia guardada.
 // Íconos/manifest: copia guardada y se refresca en segundo plano. Supabase y otras webs: nunca se guardan.
-const CACHE = "motorgestion-v5";
-const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
+const CACHE = "motorgestion-v6";
+const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./logo.webp", "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png", "./apple-touch-icon.png", "./favicon.png"];
 self.addEventListener("install", (e) => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {})); });
 self.addEventListener("activate", (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", (e) => {

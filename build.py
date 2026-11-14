@@ -15,7 +15,7 @@ LOADER = r"""<script>
   var src = document.getElementById("mg-src").textContent;
   var h = 2166136261; for (var i = 0; i < src.length; i++) { h ^= src.charCodeAt(i); h = Math.imul(h, 16777619); }
   var clave = "/__mg_js/" + (h >>> 0).toString(36) + "-" + src.length;
-  function msg(t) { var c = document.getElementById("cargando"); if (c) c.textContent = t; }
+  function msg(t) { var c = document.getElementById("cargando-txt") || document.getElementById("cargando"); if (c) c.textContent = t; }
   function arrancar(js) { var s = document.createElement("script"); s.type = "module"; s.src = URL.createObjectURL(new Blob([js], { type: "text/javascript" })); document.body.appendChild(s); }
   function compilar() {
     msg("Preparando MotorGestión… (solo la primera vez)");
