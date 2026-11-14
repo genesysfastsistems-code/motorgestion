@@ -4,13 +4,16 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>MotorGestión — Tu playa de autos, bajo control</title>
-<meta name="theme-color" content="#0a1424" />
+<meta name="theme-color" content="#15181d" />
 <meta name="description" content="MotorGestión: gestión de playa de autos — stock, ventas, cobranza, caja y más." />
 <link rel="manifest" href="./manifest.webmanifest" />
 <link rel="icon" href="./favicon.png" type="image/png" />
 <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
 <link rel="preload" href="./logo.webp" as="image" />
-<style>html,body{margin:0;height:100%;background:#0a1424}#root{min-height:100%}#cargando{color:#8ea3c6;font-family:system-ui,Arial;display:flex;flex-direction:column;gap:14px;height:100vh;align-items:center;justify-content:center;font-size:14px}#cargando img{width:180px;height:180px;max-width:60vw;max-height:60vw;filter:drop-shadow(0 8px 24px rgba(0,0,0,.55));animation:mgp 1.6s ease-in-out infinite}@keyframes mgp{50%{transform:scale(1.04)}}</style>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,500;0,600;0,700;1,600&family=Barlow+Semi+Condensed:ital,wght@0,600;0,700;1,700&display=swap" />
+<style>html,body{margin:0;height:100%;background:#15181d}#root{min-height:100%}#cargando{color:#a3abb7;font-family:Barlow,system-ui,Arial;display:flex;flex-direction:column;gap:14px;height:100vh;align-items:center;justify-content:center;font-size:14px}#cargando img{width:180px;height:180px;max-width:60vw;max-height:60vw;filter:drop-shadow(0 8px 24px rgba(0,0,0,.55));animation:mgp 1.6s ease-in-out infinite}@keyframes mgp{50%{transform:scale(1.04)}}</style>
 <script type="importmap">
 { "imports": {
   "react": "https://esm.sh/react@18.3.1",
@@ -287,32 +290,36 @@ function deudaVenta(venta, tasaMora, cot) {
 }
 
 // ---------- theme ----------
-const C = { bg: "#0a1424", panel: "#101d33", panel2: "#16243d", border: "#22334f", txt: "#eaf0fb", dim: "#8ea3c6", acc: "#2b7bff", ok: "#22d39a", warn: "#f5a623", bad: "#ff5c62", dev: "#7c6cff" };
-const BGGRAD = `radial-gradient(1100px 520px at 85% -15%, #14345f 0%, ${C.bg} 55%)`;
-const box = { background: C.panel, border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: "0 1px 3px rgba(0,0,0,.28)" };
+// Paleta "pista de noche": grafito + plata cepillada + rojo de la marca
+const C = { bg: "#15181d", panel: "#1d2128", panel2: "#262b33", border: "#343a44", txt: "#f1f3f6", dim: "#a3abb7", acc: "#e3262e", ok: "#2fbf7a", warn: "#f0a43a", bad: "#ff5d5d", dev: "#8b7cf6", plata: "#c9ced6", accDeep: "#a8161d", hi: "#ffffff" };
+const FONT = "'Barlow', system-ui, -apple-system, 'Segoe UI', sans-serif";
+const FONT_C = "'Barlow Semi Condensed', 'Barlow', system-ui, sans-serif";
+const METAL = "linear-gradient(145deg, #50575f 0%, #2c3138 48%, #3a4048 100%)";
+const BGGRAD = `radial-gradient(1000px 520px at 105% -12%, rgba(227,38,46,.10), transparent 62%), repeating-linear-gradient(135deg, rgba(255,255,255,.014) 0 2px, transparent 2px 6px), ${C.bg}`;
+const box = { background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 1px 0 rgba(255,255,255,.03) inset, 0 6px 18px rgba(0,0,0,.18)" };
 function Btn({ children, onClick, kind = "def", small, style }) {
-  const grad = { acc: `linear-gradient(135deg, ${C.acc}, #1f63d8)`, ok: `linear-gradient(135deg, ${C.ok}, #14b07f)`, dev: `linear-gradient(135deg, ${C.dev}, #5b49d6)` };
+  const grad = { acc: "linear-gradient(180deg, #f0434a 0%, #e3262e 45%, #c11b23 100%)", ok: "linear-gradient(180deg, #3fd08b 0%, #2fbf7a 50%, #239a62 100%)", dev: "linear-gradient(180deg, #9d90fa 0%, #8b7cf6 50%, #6e5de0 100%)" };
   const bg = grad[kind] || (kind === "ghost" ? "transparent" : C.panel2);
   const colored = !!grad[kind];
-  return <button onClick={onClick} style={{ background: bg, color: kind === "ghost" ? C.dim : "#fff", border: `1px solid ${colored ? "transparent" : (kind === "ghost" ? C.border : C.panel2)}`, borderRadius: 9, padding: small ? "6px 11px" : "9px 15px", cursor: "pointer", fontSize: small ? 12 : 13, fontWeight: 600, boxShadow: colored ? "0 2px 8px rgba(0,0,0,.28)" : "none", ...style }}>{children}</button>;
+  return <button onClick={onClick} style={{ background: bg, color: kind === "ghost" ? C.plata : "#fff", border: `1px solid ${colored ? "rgba(0,0,0,.25)" : C.border}`, borderRadius: 8, padding: small ? "6px 11px" : "9px 16px", cursor: "pointer", fontSize: small ? 12.5 : 13.5, fontWeight: 600, fontFamily: FONT, letterSpacing: 0.1, boxShadow: colored ? "0 1px 0 rgba(255,255,255,.22) inset, 0 3px 10px rgba(0,0,0,.3)" : "none", ...style }}>{children}</button>;
 }
 const Field = ({ label, children }) => <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: C.dim }}>{label}{children}</label>;
-const inp = { background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, color: C.txt, padding: "8px 10px", fontSize: 13, width: "100%", boxSizing: "border-box" };
-const SubT = ({ children }) => <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: C.acc, margin: "10px 0 6px" }}>{children}</div>;
-const Kpi = ({ t, v, c, onClick }) => <div onClick={onClick} className={onClick ? "kpi-click" : ""} style={{ ...box, padding: 14, borderTop: `2px solid ${c || C.acc}`, cursor: onClick ? "pointer" : "default", position: "relative" }}><div style={{ fontSize: 11, color: C.dim, textTransform: "uppercase", letterSpacing: 0.5 }}>{t}</div><div style={{ fontSize: 18, fontWeight: 700, color: c || C.txt, marginTop: 4 }}>{v}</div>{onClick && <div style={{ position: "absolute", top: 12, right: 12, color: C.dim, fontSize: 14 }}>›</div>}</div>;
+const inp = { background: "#121418", border: `1px solid ${C.border}`, borderRadius: 7, color: C.txt, padding: "9px 11px", fontSize: 13.5, fontFamily: FONT, width: "100%", boxSizing: "border-box" };
+const SubT = ({ children }) => <div style={{ fontSize: 13, fontWeight: 600, color: C.plata, margin: "12px 0 6px", display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 3, height: 13, background: C.acc, borderRadius: 2 }} />{children}</div>;
+const Kpi = ({ t, v, c, onClick }) => <div onClick={onClick} className={onClick ? "kpi-click" : ""} style={{ ...box, padding: 14, borderTop: `3px solid ${c || C.plata}`, cursor: onClick ? "pointer" : "default", position: "relative" }}><div style={{ fontSize: 12.5, color: C.dim, fontWeight: 500 }}>{t}</div><div style={{ fontSize: 24, fontWeight: 700, fontFamily: FONT_C, color: c || C.txt, marginTop: 2, letterSpacing: 0.2, fontVariantNumeric: "tabular-nums" }}>{v}</div>{onClick && <div style={{ position: "absolute", top: 12, right: 12, color: C.dim, fontSize: 14 }}>›</div>}</div>;
 const Rows = ({ rows }) => <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>{rows.map(([k, val], i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span style={{ color: C.dim }}>{k}</span><span>{val}</span></div>)}</div>;
 const Empty = ({ t }) => <div style={{ ...box, padding: 34, textAlign: "center", color: C.dim }}><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke={C.border} strokeWidth="1.6" style={{ marginBottom: 8 }}><path d="M3 8l9-5 9 5v8l-9 5-9-5V8z" /><path d="M3 8l9 5 9-5M12 13v9" strokeLinecap="round" strokeLinejoin="round" /></svg><div style={{ fontSize: 14 }}>{t}</div></div>;
 function Titulo({ icon, children, sub }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 16 }}>
-      <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg, ${C.acc}, #123a86)`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 2px 10px ${C.acc}44` }}><Ico name={icon} size={19} /></div>
-      <div><div style={{ fontSize: 19, fontWeight: 800, lineHeight: 1.1 }}>{children}</div>{sub && <div style={{ fontSize: 12, color: C.dim }}>{sub}</div>}</div>
+      <div style={{ width: 42, height: 42, borderRadius: 11, background: METAL, border: "1px solid #5b626b", color: C.acc, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 0 rgba(255,255,255,.18) inset, 0 4px 12px rgba(0,0,0,.35)" }}><Ico name={icon} size={21} /></div>
+      <div><div style={{ fontSize: 24, fontWeight: 700, fontFamily: FONT_C, lineHeight: 1.05, letterSpacing: 0.2 }}>{children}</div>{sub && <div style={{ fontSize: 13, color: C.dim, marginTop: 2 }}>{sub}</div>}</div>
     </div>
   );
 }
-const th = { padding: "9px 12px", fontWeight: 600, fontSize: 12 };
-const td = { padding: "9px 12px" };
-const Modal = ({ children, onClose, w = 720 }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 20 }}><div style={{ ...box, background: C.panel, width: w, maxHeight: "90vh", overflow: "auto", padding: 20 }}>{children}</div></div>;
+const th = { padding: "10px 12px", fontWeight: 600, fontSize: 12.5, color: C.plata };
+const td = { padding: "10px 12px" };
+const Modal = ({ children, onClose, w = 720 }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 20 }}><div style={{ ...box, background: C.panel, width: w, maxWidth: "100%", maxHeight: "90vh", overflow: "auto", padding: 22, borderTop: `3px solid ${C.acc}` }}>{children}</div></div>;
 // Achica una imagen (logo) antes de guardarla, para que la sincronización y los PDF sean livianos
 const achicarImagen = (file, max = 400) => new Promise((res, rej) => {
   const r = new FileReader();
@@ -337,26 +344,32 @@ function CarIcon({ size = 20, color = "#fff", wheel = "#123a86", glass = "#1e63d
   );
 }
 function Ico({ name, size = 16 }) {
-  const p = { fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" };
+  const p = { fill: "none", stroke: "currentColor", strokeWidth: 1.75, strokeLinecap: "round", strokeLinejoin: "round" };
   const paths = {
-    inicio: <><path d="M3 11l9-7 9 7" /><path d="M5 10v10h14V10" /></>,
-    stock: <><path d="M5 13l1.4-3.8A2 2 0 018.3 8h7.4a2 2 0 011.9 1.2L19 13" /><rect x="3.5" y="13" width="17" height="4.5" rx="1.5" /><circle cx="7.5" cy="17.5" r="1.3" /><circle cx="16.5" cy="17.5" r="1.3" /></>,
-    taller: <path d="M14.6 6.4a4 4 0 00-5.4 5.2L4 16.8 7.2 20l5.2-5.2a4 4 0 005.2-5.4l-2.4 2.4-2.2-.6-.6-2.2 2.2-2.6z" />,
-    clientes: <><circle cx="12" cy="8" r="3.3" /><path d="M5 20c0-3.4 3.1-5.5 7-5.5s7 2.1 7 5.5" /></>,
-    reservas: <path d="M6 4h12v16l-6-4-6 4z" />,
-    ventas: <><path d="M4 6h15l-1.5 8.5h-11z" /><circle cx="9" cy="19" r="1.4" /><circle cx="16.5" cy="19" r="1.4" /></>,
-    cobranza: <><rect x="3" y="6" width="18" height="12" rx="2" /><circle cx="12" cy="12" r="2.6" /></>,
-    caja: <><rect x="3" y="8" width="18" height="12" rx="2" /><path d="M7 8V6a2 2 0 012-2h6a2 2 0 012 2v2" /></>,
-    cxp: <><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M3 10h18" /></>,
-    fact: <><path d="M6 3h9l3 3v15H6z" /><path d="M9 8.5h6M9 12h6M9 15.5h4" /></>,
-    reportes: <path d="M5 20V12M10 20V5M15 20v-9M20 20V8" />,
-    notas: <><rect x="6" y="4" width="12" height="16" rx="2" /><path d="M9 9h6M9 12.5h6M9 16h3.5" /></>,
-    legal: <path d="M12 3l7 3v5c0 4-3 7.2-7 9-4-1.8-7-5-7-9V6z" />,
-    log: <path d="M3 12h4l2.5 6 4-14 2.5 8H21" />,
-    papelera: <><path d="M4 7h16" /><path d="M9.5 7V5h5v2" /><path d="M6.5 7l1 13h9l1-13" /></>,
-    cfg: <><circle cx="12" cy="12" r="3" /><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8" /></>,
+    inicio: <><path d="M4 13h6V4H4zM14 20h6v-9h-6zM14 8h6V4h-6zM4 20h6v-3H4z" /></>,
+    stock: <><path d="M3.5 15.5v-3.2l2.2-.6 2.4-3.6c.4-.6 1-.9 1.7-.9h5.3c.7 0 1.3.3 1.7.8l2.7 3.4 1.6.4c.5.1.9.6.9 1.1v2.6h-2" /><path d="M9.5 15.5h5" /><circle cx="7" cy="16" r="2" /><circle cx="17" cy="16" r="2" /><path d="M8.6 11.5h10" /></>,
+    taller: <><path d="M14.7 6.3a4 4 0 0 0-5.3 5.3L3.8 17.2a1.6 1.6 0 0 0 2.3 2.3l5.6-5.6a4 4 0 0 0 5.3-5.3l-2.4 2.4-2.1-.4-.4-2.1z" /></>,
+    clientes: <><circle cx="9" cy="8.5" r="3.2" /><path d="M3.5 19.5c.4-3.2 2.7-5 5.5-5s5.1 1.8 5.5 5" /><path d="M15.5 5.6a3 3 0 0 1 0 5.8M17.5 14.8c1.7.6 2.8 2.2 3 4.7" /></>,
+    reservas: <><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M8 3v4M16 3v4M4 10h16" /><path d="M9.5 14.5l1.8 1.8 3.4-3.4" /></>,
+    ventas: <><path d="M3 12.5l8.5-8.5H20v8.5L11.5 21z" /><circle cx="15.8" cy="8.2" r="1.4" /></>,
+    cobranza: <><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M3 10h18" /><path d="M7 15h3" /></>,
+    caja: <><path d="M5 10h14l1 10H4z" /><path d="M8 10V6h8v4" /><path d="M10 6V4h4v2" /><path d="M8 14h2M12 14h2M8 17h8" /></>,
+    cxp: <><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z" /><path d="M9 8h6M9 11.5h6" /><path d="M12 14.5v3M10.5 16l1.5 1.5 1.5-1.5" /></>,
+    fact: <><path d="M7 3h7l4 4v14H7z" /><path d="M14 3v4h4" /><path d="M10 12h5M10 15.5h5" /></>,
+    reportes: <><path d="M4 20h16" /><path d="M6.5 16.5v-4M11 16.5V8M15.5 16.5v-6M20 16.5V5" /></>,
+    notas: <><path d="M5 4h14v11l-5 5H5z" /><path d="M14 20v-5h5" /><path d="M8.5 8.5h7M8.5 12h4" /></>,
+    legal: <><path d="M12 4v16M7 20h10" /><path d="M5 8h14" /><path d="M5 8l-2.5 6a2.8 2.8 0 0 0 5 0zM19 8l-2.5 6a2.8 2.8 0 0 0 5 0z" /></>,
+    log: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>,
+    papelera: <><path d="M4.5 7h15" /><path d="M9.5 7V4.5h5V7" /><path d="M6.5 7l1 13h9l1-13" /><path d="M10 11v5.5M14 11v5.5" /></>,
+    cfg: <><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></>,
+    menu: <path d="M4 7h16M4 12h16M4 17h16" />,
+    salir: <><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" /><path d="M10 16l-4-4 4-4M6 12h10" /></>,
+    nube: <path d="M7 18h10.5a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.5 9.2 4.5 4.5 0 0 0 7 18z" />,
+    campana: <><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z" /><path d="M10 20.5a2 2 0 0 0 4 0" /></>,
+    dolar: <><path d="M15.5 8.5c-.5-1.3-1.9-2-3.5-2-2 0-3.5 1-3.5 2.6 0 3.6 7 2 7 5.8 0 1.6-1.5 2.6-3.5 2.6-1.7 0-3.1-.8-3.6-2.1" /><path d="M12 4.5v2M12 17.5v2" /></>,
+    cerrar: <path d="M6 6l12 12M18 6L6 18" />,
   };
-  return <svg viewBox="0 0 24 24" width={size} height={size} {...p}>{paths[name] || null}</svg>;
+  return <svg viewBox="0 0 24 24" width={size} height={size} {...p} style={{ display: "block", flexShrink: 0 }}>{paths[name] || null}</svg>;
 }
 function Marca({ size = 22, tagline = false, center = false }) {
   const mark = Math.round(size * 1.05);
@@ -364,7 +377,7 @@ function Marca({ size = 22, tagline = false, center = false }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: center ? "center" : "flex-start" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
         <img src="./icon-192.png" alt="" style={{ width: Math.round(mark * 1.45), height: Math.round(mark * 1.45), display: "block", filter: "drop-shadow(0 2px 6px rgba(0,0,0,.45))" }} />
-        <div style={{ fontWeight: 800, fontSize: size, letterSpacing: -0.5, lineHeight: 1 }}><span style={{ color: C.txt }}>Motor</span><span style={{ color: C.acc }}>Gestión</span></div>
+        <div style={{ fontWeight: 700, fontStyle: "italic", fontFamily: FONT_C, fontSize: Math.round(size * 1.12), letterSpacing: 0.2, lineHeight: 1 }}><span style={{ color: C.plata }}>Motor</span><span style={{ color: C.acc }}>Gestión</span></div>
       </div>
       {tagline && <div style={{ fontSize: Math.max(11, Math.round(size * 0.42)), color: C.dim, letterSpacing: 0.3 }}>Tu playa de autos, bajo control</div>}
     </div>
@@ -558,8 +571,8 @@ function Login({ onLogin, msg }) {
   };
   const key = (e) => e.key === "Enter" && entrar();
   return (
-    <div style={{ background: BGGRAD, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter, system-ui, sans-serif", padding: 16, boxSizing: "border-box" }}>
-      <div style={{ ...box, padding: 30, width: 360, maxWidth: "100%", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,.45)" }}>
+    <div style={{ background: BGGRAD, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, padding: 16, boxSizing: "border-box" }}>
+      <div style={{ ...box, padding: 30, width: 370, maxWidth: "100%", boxSizing: "border-box", borderTop: `3px solid ${C.acc}`, background: "linear-gradient(180deg, #20242b 0%, #191c22 100%)", boxShadow: "0 24px 70px rgba(0,0,0,.55)" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 6 }}>
           <img src="./logo.webp" alt="MotorGestión" style={{ width: 190, height: 190, maxWidth: "70%", objectFit: "contain", filter: "drop-shadow(0 8px 24px rgba(0,0,0,.55))" }} />
           <div style={{ fontSize: 12, color: C.dim, letterSpacing: 0.3, marginTop: 4 }}>Tu playa de autos, bajo control</div>
@@ -588,8 +601,8 @@ function CambiarPass({ auth, onDone, onLogout }) {
     setCargando(false);
   };
   return (
-    <div style={{ background: BGGRAD, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter, system-ui, sans-serif", padding: 16, boxSizing: "border-box" }}>
-      <div style={{ ...box, padding: 30, width: 360, maxWidth: "100%", boxSizing: "border-box" }}>
+    <div style={{ background: BGGRAD, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, padding: 16, boxSizing: "border-box" }}>
+      <div style={{ ...box, padding: 30, width: 370, maxWidth: "100%", boxSizing: "border-box", borderTop: `3px solid ${C.acc}` }}>
         <div style={{ marginBottom: 12 }}><Marca size={18} /></div>
         <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Cambiá tu contraseña</div>
         <div style={{ color: C.dim, fontSize: 12, marginBottom: 18 }}>Tu contraseña es temporal. Definí una nueva para empezar a usar el sistema.</div>
@@ -670,7 +683,7 @@ function DevApp({ db, setDb, auth, onLogout, cloud }) {
   const delPago = (id) => { if (confirm("¿Eliminar este cobro del historial?")) setDb((s) => ({ ...s, pagosSusc: (s.pagosSusc || []).filter((p) => p.id !== id) })); };
   const estadoVence = (s) => { if (s.plan === "Único pago" || !s.vence) return null; const dd = diasEntre(today(), s.vence); if (s.vence < today()) return { txt: "Vencida", c: C.bad }; if (dd <= 7) return { txt: `Vence en ${dd}d`, c: C.warn }; return null; };
   return (
-    <div style={{ background: BGGRAD, color: C.txt, minHeight: "100vh", fontFamily: "Inter, system-ui, sans-serif" }}>
+    <div style={{ background: BGGRAD, color: C.txt, minHeight: "100vh", fontFamily: FONT }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", borderBottom: `1px solid ${C.border}` }}>
         <Marca size={17} /><span style={{ color: C.dim, fontWeight: 600, fontSize: 13, borderLeft: `1px solid ${C.border}`, paddingLeft: 12 }}>Panel del desarrollador</span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.dim }}>
@@ -820,23 +833,71 @@ function Sistema({ db, setDb, auth, onLogout, cloud }) {
 
   const TABS = [...PERMS.filter(([k]) => puede(k)), ...(auth.rol === "admin" ? [["log", "Actividad"], ["papelera", "Papelera"], ["cfg", "Ajustes"]] : [])];
 
+  const [menuAbierto, setMenuAbierto] = useState(false);
+  const irA = (k) => { setTab(k); setMenuAbierto(false); try { window.scrollTo(0, 0); } catch {} };
+  const disponibles = new Set(TABS.map(([k]) => k));
+  const etiqueta = Object.fromEntries(TABS);
+  const GRUPOS = [["Operación", ["inicio", "stock", "taller", "reservas", "ventas"]], ["Clientes y cobros", ["clientes", "cobranza", "caja", "cxp"]], ["Documentos", ["fact", "legal", "notas"]], ["Gestión", ["reportes", "log", "papelera", "cfg"]]]
+    .map(([t, ks]) => [t, ks.filter((k) => disponibles.has(k))]).filter(([, ks]) => ks.length);
+  const nube = cloud ? ({ ok: [C.ok, "Sincronizado"], subiendo: [C.warn, "Guardando…"], error: [C.bad, "Sin conexión"], idle: [C.dim, "Nube"] }[cloud.nube.estado] || [C.dim, "Nube"]) : null;
+  const iniciales = String(auth.nombre || auth.user || "?").split(/\s+/).map((x) => x[0]).slice(0, 2).join("").toUpperCase();
+
   return (
-    <div className={cfg.tema === "claro" ? "tema-claro" : ""} style={{ background: BGGRAD, color: C.txt, minHeight: "100vh", fontFamily: "Inter, system-ui, sans-serif", zoom: cfg.uiZoom || 1, filter: cfg.tema === "claro" ? "invert(1) hue-rotate(180deg)" : "none" }}>
-      <style>{`*{scrollbar-width:thin;scrollbar-color:${C.border} transparent} input,select,textarea{outline:none;transition:border-color .15s,box-shadow .15s} input:focus,select:focus,textarea:focus{border-color:${C.acc};box-shadow:0 0 0 3px ${C.acc}22} button{transition:filter .15s,transform .1s,box-shadow .15s} button:hover{filter:brightness(1.09)} button:active{transform:translateY(1px)} a{cursor:pointer} tbody tr{transition:background .12s} tbody tr:hover{background:rgba(120,150,200,.06)} .kpi-click{transition:transform .12s,box-shadow .12s,border-color .12s} .kpi-click:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,.4)} .card-hover{transition:transform .12s,box-shadow .12s,border-color .12s} .card-hover:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,.32);border-color:${C.acc}55} @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}} .fade{animation:fadeIn .24s ease} @media print{.noprint{display:none!important}} .tema-claro img,.tema-claro canvas{filter:invert(1) hue-rotate(180deg)}`}</style>
-      <div className="noprint" style={{ position: "sticky", top: 0, zIndex: 30, display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", borderBottom: `1px solid ${C.border}`, flexWrap: "wrap", background: cfg.tema === "claro" ? "rgba(255,255,255,.9)" : "rgba(10,20,36,.88)", backdropFilter: "blur(8px)" }}>
-        <Marca size={17} />
-        <div style={{ display: "flex", alignItems: "center", gap: 8, borderLeft: `1px solid ${C.border}`, paddingLeft: 12 }}>{cfg.empresa.logo && <img src={cfg.empresa.logo} style={{ height: 24 }} />}<span style={{ color: C.dim, fontWeight: 600, fontSize: 13 }}>{cfg.empresa.nombre || "Mi playa de autos"}</span></div>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{TABS.map(([k, l]) => <button key={k} onClick={() => setTab(k)} style={{ background: tab === k ? C.acc : "transparent", color: tab === k ? "#fff" : C.dim, border: "none", padding: "7px 11px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}><Ico name={k} size={15} />{l}</button>)}</div>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, fontSize: 12, color: C.dim }}>
-          <BuscadorGlobal db={sdb} onCliente={(id) => { setSelCli(id); setTab(puede("clientes") ? "clientes" : "cobranza"); }} onVehiculo={() => setTab("stock")} onVenta={(vt) => { if (vt.plan) { setSelCli(vt.clienteId); setTab(puede("cobranza") ? "cobranza" : "clientes"); } else setTab("ventas"); }} />
-          <span title="Cotización configurada">USD: Gs {nf.format(cfg.cotizacion)}</span>
-          {cloud && (() => { const e = cloud.nube.estado; const cfg2 = { ok: [C.ok, "Nube ✓"], subiendo: [C.warn, "Guardando…"], error: [C.bad, "Sin conexión"], idle: [C.dim, "Nube"] }[e] || [C.dim, "Nube"]; return <span title={cloud.nube.fecha ? "Última sincronización: " + cloud.nube.fecha : "Respaldo en la nube"} onClick={cloud.subirNubeManual} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: cfg2[0], background: cfg2[0] + "1f", border: `1px solid ${cfg2[0]}55`, borderRadius: 20, padding: "3px 10px", cursor: "pointer" }}>☁ {cfg2[1]}</span>; })()}
-          {alertas > 0 && puede("cobranza") && <button onClick={() => setTab("cobranza")} style={{ background: "rgba(255,92,98,.15)", color: C.bad, border: `1px solid ${C.bad}`, borderRadius: 20, padding: "4px 12px", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>🔔 {alertas} vencida(s)</button>}
-          <span>{auth.nombre || auth.user} · {auth.rol === "admin" ? "Admin" : "Funcionario"}</span>
-          <Btn small kind="ghost" onClick={onLogout}>Salir</Btn>
-        </div>
-      </div>
-      <div style={{ padding: 20, maxWidth: 1200, margin: "0 auto" }}>
+    <div className={"mg-app" + (cfg.tema === "claro" ? " tema-claro" : "")} style={{ background: BGGRAD, color: C.txt, minHeight: "100vh", fontFamily: FONT, zoom: cfg.uiZoom || 1, filter: cfg.tema === "claro" ? "invert(1) hue-rotate(180deg)" : "none" }}>
+      <style>{`*{scrollbar-width:thin;scrollbar-color:${C.border} transparent} input,select,textarea{outline:none;font-family:inherit;transition:border-color .15s,box-shadow .15s} input:focus,select:focus,textarea:focus{border-color:${C.acc};box-shadow:0 0 0 3px ${C.acc}2e} button{font-family:inherit;transition:filter .15s,transform .1s,box-shadow .15s,background .15s} button:hover{filter:brightness(1.1)} button:active{transform:translateY(1px)} button:focus-visible,a:focus-visible{outline:2px solid ${C.acc};outline-offset:2px} a{cursor:pointer} table{font-variant-numeric:tabular-nums} thead tr{background:${C.panel2}!important} tbody tr{transition:background .12s} tbody tr:hover{background:rgba(201,206,214,.05)} .kpi-click{transition:transform .12s,box-shadow .12s,border-color .12s} .kpi-click:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(0,0,0,.4)} .card-hover{transition:transform .12s,box-shadow .12s,border-color .12s} .card-hover:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(0,0,0,.36);border-color:${C.acc}66} @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}} .fade{animation:fadeIn .2s ease} @media (prefers-reduced-motion:reduce){.fade{animation:none}} @media print{.noprint{display:none!important}.mg-shell{display:block!important}} .tema-claro img,.tema-claro canvas{filter:invert(1) hue-rotate(180deg)}
+      .mg-shell{display:grid;grid-template-columns:248px minmax(0,1fr);min-height:100vh}
+      .mg-side{position:sticky;top:0;height:100vh;overflow:hidden;display:flex;flex-direction:column;background:linear-gradient(180deg,#1b1f25 0%,#121418 100%);border-right:1px solid ${C.border};z-index:40}
+      .mg-item{display:flex;align-items:center;gap:11px;width:100%;padding:8px 12px 8px 14px;border:none;border-radius:8px;background:transparent;color:${C.dim};font-size:14px;font-weight:500;cursor:pointer;text-align:left;position:relative}
+      .mg-item:hover{background:rgba(201,206,214,.06);color:${C.txt};filter:none}
+      .mg-item.activo{background:linear-gradient(90deg,rgba(227,38,46,.18),rgba(227,38,46,.04));color:#fff;font-weight:600}
+      .mg-item.activo::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;border-radius:3px;background:${C.acc};box-shadow:0 0 10px ${C.acc}}
+      .mg-item.activo svg{color:${C.acc}}
+      .mg-top{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:12px;padding:10px 22px;border-bottom:1px solid ${C.border};background:rgba(21,24,29,.86);backdrop-filter:blur(10px);flex-wrap:wrap}
+      .mg-burger{display:none}
+      .mg-overlay{display:none}
+      @media (max-width:900px){.mg-shell{grid-template-columns:1fr}.mg-side{position:fixed;left:0;top:0;bottom:0;width:272px;transform:translateX(-102%);transition:transform .22s ease;box-shadow:12px 0 40px rgba(0,0,0,.5)}.mg-side.abierto{transform:none}.mg-burger{display:inline-flex}.mg-overlay.abierto{display:block;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:35}.mg-top{padding:10px 14px}.mg-cont{padding:14px!important}}
+      @media (max-width:700px){.mg-cont [style*="grid-template-columns"]{grid-template-columns:1fr!important}.mg-cont [style*="grid-template-columns: repeat"]{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important}.mg-cont table{display:block;overflow-x:auto}}`}</style>
+      <div className="mg-shell">
+        <aside className={"mg-side noprint" + (menuAbierto ? " abierto" : "")}>
+          <div style={{ padding: "18px 16px 14px", borderBottom: `1px solid ${C.border}` }}>
+            <Marca size={18} />
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 14, padding: "8px 10px", borderRadius: 8, background: "rgba(255,255,255,.03)", border: `1px solid ${C.border}` }}>
+              {cfg.empresa.logo ? <img src={cfg.empresa.logo} alt="" style={{ width: 28, height: 28, objectFit: "contain", borderRadius: 5, background: "#fff", padding: 2 }} /> : <div style={{ width: 28, height: 28, borderRadius: 6, background: METAL, display: "flex", alignItems: "center", justifyContent: "center", color: C.plata }}><Ico name="stock" size={16} /></div>}
+              <div style={{ minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cfg.empresa.nombre || "Mi playa de autos"}</div><div style={{ fontSize: 11.5, color: C.dim }}>{cfg.empresa.ciudad || "Panel de gestión"}</div></div>
+            </div>
+          </div>
+          <nav style={{ padding: "4px 10px 10px", flex: 1, overflowY: "auto", minHeight: 0 }}>
+            {GRUPOS.map(([t, ks]) => (
+              <div key={t} style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12, color: "#7d8591", fontWeight: 600, padding: "0 12px 6px" }}>{t}</div>
+                {ks.map((k) => (
+                  <button key={k} className={"mg-item" + (tab === k ? " activo" : "")} onClick={() => irA(k)} aria-current={tab === k ? "page" : undefined}>
+                    <Ico name={k} size={18} /><span style={{ flex: 1 }}>{etiqueta[k]}</span>
+                    {k === "cobranza" && alertas > 0 && <span style={{ background: C.acc, color: "#fff", borderRadius: 10, fontSize: 11, fontWeight: 700, padding: "1px 7px" }}>{alertas}</span>}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </nav>
+          <div style={{ padding: 12, borderTop: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 34, height: 34, borderRadius: "50%", background: METAL, border: "1px solid #5b626b", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 13, color: C.plata, flexShrink: 0 }}>{iniciales}</div>
+            <div style={{ minWidth: 0, flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{auth.nombre || auth.user}</div><div style={{ fontSize: 11.5, color: C.dim }}>{auth.rol === "admin" ? "Administrador" : "Funcionario"}</div></div>
+            <button onClick={onLogout} title="Salir" aria-label="Salir" style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.dim, borderRadius: 8, padding: 7, cursor: "pointer" }}><Ico name="salir" size={16} /></button>
+          </div>
+        </aside>
+        <div className={"mg-overlay noprint" + (menuAbierto ? " abierto" : "")} onClick={() => setMenuAbierto(false)} />
+        <div style={{ minWidth: 0 }}>
+          <header className="mg-top noprint">
+            <button className="mg-burger" onClick={() => setMenuAbierto(true)} aria-label="Abrir menú" style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.txt, borderRadius: 8, padding: 7, cursor: "pointer", alignItems: "center" }}><Ico name="menu" size={18} /></button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.dim, fontSize: 14 }}><Ico name={tab} size={17} /><span style={{ color: C.txt, fontWeight: 600 }}>{etiqueta[tab] || ""}</span></div>
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, fontSize: 12.5, color: C.dim, flexWrap: "wrap" }}>
+              <BuscadorGlobal db={sdb} onCliente={(id) => { setSelCli(id); irA(puede("clientes") ? "clientes" : "cobranza"); }} onVehiculo={() => irA("stock")} onVenta={(vt) => { if (vt.plan) { setSelCli(vt.clienteId); irA(puede("cobranza") ? "cobranza" : "clientes"); } else irA("ventas"); }} />
+              <span title="Cotización configurada en Ajustes" style={{ display: "inline-flex", alignItems: "center", gap: 4, border: `1px solid ${C.border}`, borderRadius: 20, padding: "4px 10px", color: C.plata }}><Ico name="dolar" size={14} />Gs {nf.format(cfg.cotizacion)}</span>
+              {nube && <span title={(cloud.nube.aviso || "") + (cloud.nube.fecha ? " · Última sincronización: " + cloud.nube.fecha : "")} onClick={cloud.subirNubeManual} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 600, color: nube[0], border: `1px solid ${nube[0]}55`, background: nube[0] + "14", borderRadius: 20, padding: "4px 10px", cursor: "pointer" }}><Ico name="nube" size={14} />{nube[1]}</span>}
+              {alertas > 0 && puede("cobranza") && <button onClick={() => irA("cobranza")} title="Cuotas vencidas" style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(255,93,93,.12)", color: C.bad, border: `1px solid ${C.bad}66`, borderRadius: 20, padding: "4px 11px", cursor: "pointer", fontWeight: 700, fontSize: 12.5 }}><Ico name="campana" size={14} />{alertas} vencida{alertas === 1 ? "" : "s"}</button>}
+            </div>
+          </header>
+          <main className="mg-cont" style={{ padding: "22px 26px", maxWidth: 1240, margin: "0 auto" }}>
         {auth.rol === "admin" && (!cfg.ultimoBackup || diasEntre(cfg.ultimoBackup, today()) >= 7) && (
           <div className="noprint" style={{ ...box, borderColor: C.warn, background: "rgba(245,166,35,.08)", padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: 13, color: C.warn }}>💾 {cfg.ultimoBackup ? `Tu última copia de seguridad fue el ${cfg.ultimoBackup}.` : "Todavía no descargaste una copia de seguridad."} Además de la nube, conviene tener una copia propia.</span>
@@ -862,6 +923,8 @@ function Sistema({ db, setDb, auth, onLogout, cloud }) {
         {tab === "log" && auth.rol === "admin" && <Actividad db={sdb} setDb={setDb} />}
         {tab === "papelera" && auth.rol === "admin" && <Papelera db={sdb} setDb={setDb} setVeh={setVeh} />}
         </div></Seguro>
+          </main>
+        </div>
       </div>
     </div>
   );
@@ -902,7 +965,7 @@ function VehCard({ v, cfg, onEdit, onDel, vender, openLegal, setVeh }) {
       <div style={{ display: "flex", gap: 14, padding: 12, alignItems: "center" }}>
         <div style={{ width: 74, height: 56, borderRadius: 8, background: C.bg, border: `1px solid ${C.border}`, backgroundImage: foto ? `url(${foto})` : "none", backgroundSize: "cover", backgroundPosition: "center", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: C.dim, fontSize: 11 }}>{!foto && "sin foto"}</div>
         <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, fontSize: 15 }}>{v.marca} {v.modelo} <span style={{ color: C.dim, fontWeight: 400, fontSize: 13 }}>· {v.anio} · {v.color}</span></div><div style={{ fontSize: 12, color: C.dim }}>Chapa {v.chapa || "—"} · {v.km ? nf.format(v.km) + " km" : "—"} · {v.condicion || "—"} · {v.procedencia}</div></div>
-        <div style={{ textAlign: "right" }}><div style={{ fontWeight: 800, fontSize: 15, color: C.acc }}>{money(v.precioVenta, "Gs")}</div><div style={{ fontSize: 12, color: m >= 0 ? C.ok : C.bad }}>margen {money(m, "Gs")} ({margenPct(v).toFixed(0)}%)</div></div>
+        <div style={{ textAlign: "right" }}><div style={{ fontWeight: 800, fontSize: 15, color: C.hi }}>{money(v.precioVenta, "Gs")}</div><div style={{ fontSize: 12, color: m >= 0 ? C.ok : C.bad }}>margen {money(m, "Gs")} ({margenPct(v).toFixed(0)}%)</div></div>
         <select value={v.estado || "Disponible"} onChange={(e) => setVeh(v.id, { estado: e.target.value })} style={{ ...inp, width: 120, color: estadoColor(v.estado), fontWeight: 600 }}>{["Disponible", "Reservado", "En taller", "Vendido"].map((s) => <option key={s}>{s}</option>)}</select>
         <Btn small kind="ghost" onClick={() => setOpen(!open)}>{open ? "▲" : "▼"}</Btn>
       </div>
@@ -1137,7 +1200,7 @@ function PagoModal({ venta, cli, veh, cuota: c, cfg, onClose, onConfirm }) {
           {effMora !== mora.monto && <div style={{ display: "flex", justifyContent: "space-between", color: C.ok, fontSize: 13, fontWeight: 700 }}><span>Interés a cobrar (con descuento)</span><span>{money(effMora, m)}</span></div>}
         </div>}
         {abonadoGs > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: C.ok, fontSize: 13, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}` }}><span>Ya abonado</span><span>Gs {nf.format(Math.round(abonadoGs))}</span></div>}
-        <div style={{ borderTop: `2px solid ${C.acc}`, marginTop: 10, paddingTop: 10, display: "flex", justifyContent: "space-between", fontSize: 18, fontWeight: 800 }}><span>SALDO A PAGAR</span><span style={{ color: C.acc }}>{m === "USD" ? "US$ " + saldoUSD.toFixed(2) : money(saldoGs, "Gs")}</span></div>
+        <div style={{ borderTop: `2px solid ${C.acc}`, marginTop: 10, paddingTop: 10, display: "flex", justifyContent: "space-between", fontSize: 18, fontWeight: 800 }}><span>SALDO A PAGAR</span><span style={{ color: C.hi }}>{m === "USD" ? "US$ " + saldoUSD.toFixed(2) : money(saldoGs, "Gs")}</span></div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.dim, marginTop: 2 }}><span>Gs {nf.format(Math.round(saldoGs))}</span><span>US$ {saldoUSD.toFixed(2)}</span></div>
       </div>
       <SubT>Monto pagado (parcial o total, puede ser mixto)</SubT>
@@ -1147,7 +1210,7 @@ function PagoModal({ venta, cli, veh, cuota: c, cfg, onClose, onConfirm }) {
       </div>
       <div style={{ ...box, padding: 12, marginTop: 12, background: completo ? "rgba(34,211,154,.08)" : parcial ? "rgba(43,123,255,.08)" : "rgba(245,166,35,.08)", borderColor: completo ? C.ok : parcial ? C.acc : C.warn }}>
         {completo ? <div style={{ display: "flex", justifyContent: "space-between", color: C.ok, fontWeight: 700 }}><span>✓ Cuota cancelada</span>{vueltoGs > 1 && <span style={{ color: C.warn }}>Vuelto: Gs {nf.format(Math.round(vueltoGs))}</span>}</div>
-          : parcial ? <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ fontSize: 13, color: C.acc, fontWeight: 700 }}>Abono parcial · queda saldo:</div><div style={{ textAlign: "right" }}><div style={{ fontWeight: 700 }}>Gs {nf.format(Math.round(faltaGs))}</div><div style={{ fontSize: 12, color: C.dim }}>o US$ {faltaUSD.toFixed(2)}</div></div></div>
+          : parcial ? <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ fontSize: 13, color: C.hi, fontWeight: 700 }}>Abono parcial · queda saldo:</div><div style={{ textAlign: "right" }}><div style={{ fontWeight: 700 }}>Gs {nf.format(Math.round(faltaGs))}</div><div style={{ fontSize: 12, color: C.dim }}>o US$ {faltaUSD.toFixed(2)}</div></div></div>
           : <div style={{ fontSize: 13, color: C.dim }}>Ingresá el monto (podés abonar una parte).</div>}
       </div>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}><Btn kind="ghost" onClick={onClose}>Cancelar</Btn><Btn kind="ok" onClick={() => pagadoGs > 0 ? onConfirm({ pagoGs: gs, pagoUSD: usd, moraMonto: effMora, diasAtraso: mora.dias }) : alert("Ingresá un monto mayor a 0.")}>{parcial ? "Registrar abono" : "Confirmar pago"}</Btn></div>
@@ -1422,7 +1485,7 @@ function Cobranza({ db, cfg, setDb, selCli, setSelCli }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {lista.map((c) => { const d = deudaCli(c.id); return (
           <div key={c.id} className="card-hover" style={{ ...box, padding: 12, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => setSelCli(c.id)}>
-            <div style={{ width: 40, height: 40, borderRadius: "50%", background: `linear-gradient(135deg, ${C.acc}, #123a86)`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>{c.nombre[0]}</div>
+            <div style={{ width: 40, height: 40, borderRadius: "50%", background: METAL, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>{c.nombre[0]}</div>
             <div style={{ flex: 1 }}><div style={{ fontWeight: 700 }}>{c.nombre}</div><div style={{ fontSize: 12, color: C.dim }}>{c.tel || "—"} · {ventasCred(c.id).length} crédito(s)</div></div>
             {d.venc > 0 && <span style={{ background: "rgba(255,92,98,.15)", color: C.bad, border: `1px solid ${C.bad}`, borderRadius: 20, padding: "2px 10px", fontSize: 12, fontWeight: 700 }}>🔔 {d.venc} vencida(s)</span>}
             <div style={{ textAlign: "right" }}><div style={{ fontSize: 11, color: C.dim }}>Deuda (Gs eq.)</div><div style={{ fontWeight: 700, color: d.total ? C.bad : C.ok }}>{money(d.total, "Gs")}</div></div>
@@ -2036,14 +2099,14 @@ function Reportes({ db, cfg, setDb, tid }) {
       <Titulo icon="reportes" sub="Ventas, márgenes, comisiones y proyección">Reportes</Titulo>
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14 }}><span style={{ marginRight: "auto", fontSize: 13, color: C.dim }}>Período seleccionado:</span><input type="month" style={{ ...inp, width: 170 }} value={mes} onChange={(e) => setMes(e.target.value)} /></div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 16 }}>
-        <Kpi t="Ventas del mes" v={ventasMes.length} /><Kpi t="Contado / Crédito" v={`${contado.length} / ${credito.length}`} /><Kpi t="Facturado (Gs eq.)" v={money(facturado, "Gs")} c={C.acc} /><Kpi t="Margen (Gs)" v={money(margenMes, "Gs")} c={C.ok} />
+        <Kpi t="Ventas del mes" v={ventasMes.length} /><Kpi t="Contado / Crédito" v={`${contado.length} / ${credito.length}`} /><Kpi t="Facturado (Gs eq.)" v={money(facturado, "Gs")} c={C.hi} /><Kpi t="Margen (Gs)" v={money(margenMes, "Gs")} c={C.ok} />
       </div>
       <div style={{ ...box, padding: 16, marginBottom: 16 }}>
         <b>Comparativo con el mes anterior ({mesAnt})</b>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginTop: 10 }}>
           {[["Facturado", facturado, factAnt], ["Margen", margenMes, margenAnt], ["Cobros", cobrosMes, cobrosAnt]].map(([t, a, b], i) => { const d = delta(a, b); return (
             <div key={i} style={{ ...box, background: C.panel2, padding: 12 }}>
-              <div style={{ fontSize: 11, color: C.dim, textTransform: "uppercase" }}>{t}</div>
+              <div style={{ fontSize: 12.5, color: C.dim }}>{t}</div>
               <div style={{ fontSize: 17, fontWeight: 700 }}>{money(a, "Gs")}</div>
               <div style={{ fontSize: 12, color: d.c }}>{d.txt} <span style={{ color: C.dim }}>vs {money(b, "Gs")}</span></div>
             </div>
@@ -2078,7 +2141,7 @@ function Reportes({ db, cfg, setDb, tid }) {
         <div style={{ marginTop: 10, maxWidth: 480 }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "6px 0" }}><span style={{ color: C.dim }}>(+) Ventas del mes (facturado)</span><span>{money(facturado, "Gs")}</span></div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "6px 0" }}><span style={{ color: C.dim }}>(−) Costo de vehículos vendidos</span><span style={{ color: C.bad }}>{money(cogs, "Gs")}</span></div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 700, padding: "8px 0", borderTop: `1px solid ${C.border}` }}><span>(=) Margen bruto</span><span style={{ color: C.acc }}>{money(margenMes, "Gs")}</span></div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 700, padding: "8px 0", borderTop: `1px solid ${C.border}` }}><span>(=) Margen bruto</span><span style={{ color: C.hi }}>{money(margenMes, "Gs")}</span></div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, padding: "6px 0" }}><span style={{ color: C.dim }}>(−) Gastos y egresos del mes (Caja)</span><span style={{ color: C.bad }}>{money(egresosMes, "Gs")}</span></div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18, fontWeight: 800, padding: "10px 0", borderTop: `2px solid ${resultado >= 0 ? C.ok : C.bad}` }}><span>(=) RESULTADO DEL MES</span><span style={{ color: resultado >= 0 ? C.ok : C.bad }}>{money(resultado, "Gs")}</span></div>
         </div>
@@ -2088,7 +2151,7 @@ function Reportes({ db, cfg, setDb, tid }) {
         <div style={{ fontSize: 12, color: C.dim, marginTop: 8 }}>Nota: el "Resultado" usa el margen de los autos vendidos en el mes menos los egresos cargados en Caja. Evitá cargar en Caja gastos que ya incluiste en el costeo del vehículo (se contarían dos veces).</div>
       </div>
       <div style={{ ...box, padding: 16, marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}><b>Proyección de cobros (próximos 6 meses)</b><span style={{ fontSize: 12, color: C.dim }}>{atrasado > 0 && <span style={{ color: C.bad }}>Atrasado por cobrar: {money(atrasado, "Gs")} · </span>}A vencer 6 meses: <b style={{ color: C.acc }}>{money(totalProy, "Gs")}</b></span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}><b>Proyección de cobros (próximos 6 meses)</b><span style={{ fontSize: 12, color: C.dim }}>{atrasado > 0 && <span style={{ color: C.bad }}>Atrasado por cobrar: {money(atrasado, "Gs")} · </span>}A vencer 6 meses: <b style={{ color: C.hi }}>{money(totalProy, "Gs")}</b></span></div>
         <div style={{ fontSize: 12, color: C.dim, marginTop: 2 }}>Suma de las cuotas pendientes (menos abonos) según su mes de vencimiento — sin contar interés por mora.</div>
         <Barras data={serieProy} color={C.acc} fmt={montoCorto} alto={160} />
       </div>
@@ -2371,7 +2434,7 @@ function RefinanciarModal({ venta, cfg, onClose, onConfirm }) {
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}><b>Refinanciar cuotas pendientes</b><Btn small kind="ghost" onClick={onClose}>✕</Btn></div>
       <div style={{ ...box, background: C.panel2, padding: 14 }}>
         <Rows rows={[["Cuotas pendientes", `${pend.length} (${vencidas} vencida${vencidas === 1 ? "" : "s"})`], ["Capital pendiente", money(capital, m)], ["Interés por mora acumulado", money(mora, m)]]} />
-        <div style={{ borderTop: `2px solid ${C.acc}`, marginTop: 10, paddingTop: 10, display: "flex", justifyContent: "space-between", fontSize: 17, fontWeight: 800 }}><span>SALDO A REFINANCIAR</span><span style={{ color: C.acc }}>{money(saldo, m)}</span></div>
+        <div style={{ borderTop: `2px solid ${C.acc}`, marginTop: 10, paddingTop: 10, display: "flex", justifyContent: "space-between", fontSize: 17, fontWeight: 800 }}><span>SALDO A REFINANCIAR</span><span style={{ color: C.hi }}>{money(saldo, m)}</span></div>
       </div>
       <SubT>Nuevo plan</SubT>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
@@ -2610,7 +2673,7 @@ function BuscadorGlobal({ db, onCliente, onVehiculo, onVenta }) {
   const hay = cli.length || veh.length || ventasR.length;
   const nombreV = (id) => { const c = db.clientes.find((x) => x.id === id) || {}; return c.nombre || "—"; };
   const nombreVeh = (id) => { const v = db.vehiculos.find((x) => x.id === id) || {}; return `${v.marca || ""} ${v.modelo || ""} ${v.anio || ""}`.trim(); };
-  const Grupo = ({ txt }) => <div style={{ padding: "6px 12px", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, color: C.acc, background: C.panel2 }}>{txt}</div>;
+  const Grupo = ({ txt }) => <div style={{ padding: "6px 12px", fontSize: 12, fontWeight: 600, color: C.plata, background: C.panel2 }}>{txt}</div>;
   const Item = ({ main, sub, onClick }) => <div onMouseDown={onClick} style={{ padding: "8px 12px", cursor: "pointer", borderTop: `1px solid ${C.border}` }}><div style={{ fontSize: 13, fontWeight: 600, color: C.txt }}>{main}</div><div style={{ fontSize: 11, color: C.dim }}>{sub}</div></div>;
   return (
     <div style={{ position: "relative" }}>
@@ -2685,7 +2748,7 @@ function Notas({ db, setDb, tid }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {lista.map((n) => { const vencida = n.tipo === "Tarea" && !n.hecha && n.vence && n.vence < today(); return (
           <div key={n.id} style={{ ...box, padding: 12, display: "flex", alignItems: "center", gap: 12, opacity: n.hecha ? 0.55 : 1 }}>
-            {n.tipo === "Tarea" ? <input type="checkbox" checked={n.hecha} onChange={() => toggle(n.id)} style={{ width: 18, height: 18 }} /> : <span style={{ color: C.acc }}>●</span>}
+            {n.tipo === "Tarea" ? <input type="checkbox" checked={n.hecha} onChange={() => toggle(n.id)} style={{ width: 18, height: 18 }} /> : <span style={{ color: C.hi }}>●</span>}
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, textDecoration: n.hecha ? "line-through" : "none" }}>{n.texto}</div>
               <div style={{ fontSize: 12, color: C.dim }}>{n.tipo} · creada {n.fecha}{n.vence ? " · vence " : ""}<span style={{ color: vencida ? C.bad : C.dim }}>{n.vence || ""}{vencida ? " ⚠" : ""}</span>{vinLabel(n) ? " · " + vinLabel(n) : ""}</div>
