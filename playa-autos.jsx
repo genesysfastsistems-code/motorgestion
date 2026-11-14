@@ -278,6 +278,17 @@ function Titulo({ icon, children, sub }) {
 const th = { padding: "9px 12px", fontWeight: 600, fontSize: 12 };
 const td = { padding: "9px 12px" };
 const Modal = ({ children, onClose, w = 720 }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 20 }}><div style={{ ...box, background: C.panel, width: w, maxHeight: "90vh", overflow: "auto", padding: 20 }}>{children}</div></div>;
+// Achica una imagen (logo) antes de guardarla, para que la sincronización y los PDF sean livianos
+const achicarImagen = (file, max = 400) => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onerror = () => rej(new Error("No se pudo leer la imagen"));
+  r.onload = () => { const img = new Image(); img.onerror = () => rej(new Error("Formato de imagen no válido")); img.onload = () => {
+    const k = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); const w = c.toDataURL("image/webp", 0.85); res(w.startsWith("data:image/webp") ? w : c.toDataURL("image/png"));
+  }; img.src = r.result; };
+  r.readAsDataURL(file);
+});
 const readFile = (file) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(file); });
 function CarIcon({ size = 20, color = "#fff", wheel = "#123a86", glass = "#1e63d6" }) {
   const h = Math.round(size * 30 / 48);
@@ -317,9 +328,7 @@ function Marca({ size = 22, tagline = false, center = false }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: center ? "center" : "flex-start" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-        <div style={{ width: Math.round(mark * 1.18), height: Math.round(mark * 1.18), borderRadius: 7, background: `linear-gradient(140deg, ${C.acc} 0%, #123a86 100%)`, boxShadow: `0 2px 10px ${C.acc}55`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <CarIcon size={Math.round(mark * 0.84)} />
-        </div>
+        <img src="./icon-192.png" alt="" style={{ width: Math.round(mark * 1.45), height: Math.round(mark * 1.45), display: "block", filter: "drop-shadow(0 2px 6px rgba(0,0,0,.45))" }} />
         <div style={{ fontWeight: 800, fontSize: size, letterSpacing: -0.5, lineHeight: 1 }}><span style={{ color: C.txt }}>Motor</span><span style={{ color: C.acc }}>Gestión</span></div>
       </div>
       {tagline && <div style={{ fontSize: Math.max(11, Math.round(size * 0.42)), color: C.dim, letterSpacing: 0.3 }}>Tu playa de autos, bajo control</div>}
@@ -516,7 +525,10 @@ function Login({ onLogin, msg }) {
   return (
     <div style={{ background: BGGRAD, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter, system-ui, sans-serif", padding: 16, boxSizing: "border-box" }}>
       <div style={{ ...box, padding: 30, width: 360, maxWidth: "100%", boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,.45)" }}>
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><Marca size={26} tagline center /></div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 6 }}>
+          <img src="./logo.webp" alt="MotorGestión" style={{ width: 190, height: 190, maxWidth: "70%", objectFit: "contain", filter: "drop-shadow(0 8px 24px rgba(0,0,0,.55))" }} />
+          <div style={{ fontSize: 12, color: C.dim, letterSpacing: 0.3, marginTop: 4 }}>Tu playa de autos, bajo control</div>
+        </div>
         <div style={{ textAlign: "center", color: C.dim, fontSize: 12, marginBottom: 18 }}>Acceso al sistema</div>
         <div style={{ display: "grid", gap: 12 }}>
           <Field label="Usuario o email"><input style={inp} autoComplete="username" autoCapitalize="none" value={u} onChange={(e) => setU(e.target.value)} onKeyDown={key} /></Field>
@@ -560,7 +572,13 @@ function CambiarPass({ auth, onDone, onLogout }) {
 
 // ============================================================ DESARROLLADOR (app aparte)
 function DevApp({ db, setDb, auth, onLogout, cloud }) {
-  const [f, setF] = useState({ nombre: "", whatsapp: "", direccion: "", user: "", plan: "Mensual", monto: "", moneda: "Gs", inicio: today() });
+  const [f, setF] = useState({ nombre: "", whatsapp: "", direccion: "", user: "", plan: "Mensual", monto: "", moneda: "Gs", inicio: today(), logo: null });
+  const logoNuevoRef = useRef(); const logoEmpRef = useRef(); const [logoPara, setLogoPara] = useState(null);
+  const elegirLogoNuevo = (e) => { const file = e.target.files[0]; e.target.value = ""; if (file) achicarImagen(file).then((d) => setF((x) => ({ ...x, logo: d }))).catch((err) => alert(err.message)); };
+  const cambiarLogoEmpresa = (e) => {
+    const file = e.target.files[0]; e.target.value = ""; const id = logoPara; if (!file || !id) return;
+    achicarImagen(file).then((d) => setDb((s) => { const c = s.cfgs[id] || CFG0; return { ...s, cfgs: { ...s.cfgs, [id]: { ...c, empresa: { ...(c.empresa || CFG0.empresa), logo: d } } } }; })).catch((err) => alert(err.message));
+  };
   const [creada, setCreada] = useState(null);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const calcVence = (plan, inicio) => plan === "Mensual" ? fechaISO(sumarMeses(inicio, 1)) : plan === "Anual" ? fechaISO(sumarMeses(inicio, 12)) : null;
@@ -580,7 +598,7 @@ function DevApp({ db, setDb, auth, onLogout, cloud }) {
     setDb((s) => ({
       ...s,
       suscriptores: [{ id, nombre: f.nombre, whatsapp: f.whatsapp, direccion: f.direccion, user, authId, plan: f.plan, monto: +f.monto || 0, moneda: f.moneda, inicio: f.inicio, vence: calcVence(f.plan, f.inicio), bloqueado: false, creado: today() }, ...s.suscriptores],
-      cfgs: { ...s.cfgs, [id]: { ...CFG0, empresa: { nombre: f.nombre, tel: f.whatsapp, dir: f.direccion, ciudad: "", logo: null } } },
+      cfgs: { ...s.cfgs, [id]: { ...CFG0, empresa: { nombre: f.nombre, tel: f.whatsapp, dir: f.direccion, ciudad: "", logo: f.logo || null } } },
     }));
     setCreada({ user, pass: tp });
     setF({ nombre: "", whatsapp: "", direccion: "", user: "", plan: "Mensual", monto: "", moneda: "Gs", inicio: today() });
@@ -642,8 +660,16 @@ function DevApp({ db, setDb, auth, onLogout, cloud }) {
             <Field label="Monto de suscripción"><input type="number" style={inp} value={f.monto} onChange={(e) => set("monto", e.target.value)} /></Field>
             <Field label="Moneda"><select style={inp} value={f.moneda} onChange={(e) => set("moneda", e.target.value)}><option>Gs</option><option>USD</option></select></Field>
             <Field label="Inicio"><input type="date" style={inp} value={f.inicio} onChange={(e) => set("inicio", e.target.value)} /></Field>
+            <Field label="Logo de la empresa">
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Btn small onClick={() => logoNuevoRef.current.click()}>{f.logo ? "Cambiar logo" : "Cargar logo"}</Btn>
+                {f.logo && <><img src={f.logo} alt="" style={{ height: 36, borderRadius: 4, background: "#fff", padding: 2 }} /><Btn small kind="ghost" onClick={() => set("logo", null)}>Quitar</Btn></>}
+                <input ref={logoNuevoRef} type="file" accept="image/*" onChange={elegirLogoNuevo} style={{ display: "none" }} />
+              </div>
+            </Field>
           </div>
           <div style={{ marginTop: 12 }}><Btn kind="dev" onClick={crear}>{creando ? "Creando acceso…" : "Crear empresa + usuario temporal"}</Btn></div>
+          <input ref={logoEmpRef} type="file" accept="image/*" onChange={cambiarLogoEmpresa} style={{ display: "none" }} />
         </div>
         {creada && (
           <div style={{ ...box, padding: 14, marginTop: 12, borderColor: C.ok, background: "rgba(46,204,113,.08)" }}>
@@ -673,6 +699,7 @@ function DevApp({ db, setDb, auth, onLogout, cloud }) {
                   <Btn small kind="dev" onClick={() => setCobro(s)}>Cobrar / Renovar</Btn>
                   <Btn small kind="ghost" onClick={() => setHisto(s)}>Historial ({pagosDe(s.id).length})</Btn>
                   <Btn small kind="ghost" onClick={() => setUso(s)}>Uso / Plan</Btn>
+                  <Btn small kind="ghost" onClick={() => { setLogoPara(s.id); logoEmpRef.current.click(); }}>{db.cfgs[s.id]?.empresa?.logo ? <img src={db.cfgs[s.id].empresa.logo} alt="" style={{ height: 16, verticalAlign: "middle", marginRight: 4 }} /> : null}Logo</Btn>
                   <Btn small kind={s.authId ? "ghost" : "acc"} onClick={() => cambiarClave(s)}>{s.authId ? "Clave" : "Crear acceso"}</Btn>
                   <Btn small kind={s.bloqueado ? "ok" : "ghost"} onClick={() => upd(s.id, { bloqueado: !s.bloqueado })} style={!s.bloqueado ? { color: C.warn, borderColor: C.warn } : {}}>{s.bloqueado ? "Desbloquear" : "Bloquear"}</Btn>
                   <Btn small kind="ghost" onClick={() => eliminar(s)} style={{ color: C.bad, borderColor: C.bad }}>Eliminar</Btn>
@@ -1456,7 +1483,7 @@ function Config({ cfg, setCfg, db, setDb, tid, cloud, auth }) {
   const logoRef = useRef();
   const [cargando, setCargando] = useState(false);
   const [firmaOpen, setFirmaOpen] = useState(false);
-  const subirLogo = (e) => { const file = e.target.files[0]; if (file) readFile(file).then((d) => setEmp({ logo: d })); };
+  const subirLogo = (e) => { const file = e.target.files[0]; e.target.value = ""; if (file) achicarImagen(file).then((d) => setEmp({ logo: d })).catch((err) => alert(err.message)); };
   const actualizarCot = async () => {
     setCargando(true);
     try { const pyg = await fetchCotizacion(); setCfg({ ...cfg, cotizacion: pyg, cotizacionFecha: ahora() }); }
