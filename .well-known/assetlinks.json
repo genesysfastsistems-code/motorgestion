@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.kevanix.motorgestion",
+      "sha256_cert_fingerprints": ["87:18:BF:76:9F:7E:CC:2E:4A:51:05:6B:E7:77:A4:79:F9:B9:0E:0A:DD:5E:8D:E5:C5:60:24:C1:07:03:5D:8F"]
+    }
+  }
+]
