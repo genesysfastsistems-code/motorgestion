@@ -1068,7 +1068,6 @@ function VehModal({ veh, cfg, onClose, onSave }) {
       </div>
       <SubT>Vencimientos (opcional — avisan en Inicio)</SubT>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-        <Field label="Habilitación vence"><input type="date" style={inp} value={f.vencHab || ""} onChange={(e) => set("vencHab", e.target.value)} /></Field>
         <Field label="Seguro vence"><input type="date" style={inp} value={f.vencSeg || ""} onChange={(e) => set("vencSeg", e.target.value)} /></Field>
         <Field label="RTV vence"><input type="date" style={inp} value={f.vencRtv || ""} onChange={(e) => set("vencRtv", e.target.value)} /></Field>
       </div>
@@ -1957,7 +1956,7 @@ function Inicio({ db, cfg, ir, puede }) {
   const serieVentas = meses6.map((m) => ({ label: m.label, value: db.ventas.filter((v) => (v.fecha || "").slice(0, 7) === m.key).length }));
   const serieCobros = meses6.map((m) => ({ label: m.label, value: (db.caja || []).filter((x) => x.tipo === "ingreso" && (x.fecha || "").slice(0, 7) === m.key).reduce((a, x) => a + (x.monto || 0), 0) }));
   const docsVenc = [];
-  disp.forEach((v) => { [["Habilitación", v.vencHab], ["Seguro", v.vencSeg], ["RTV", v.vencRtv]].forEach(([tipo, f]) => { if (f) { const venc = f < today(); const dd = diasEntre(today(), f); if (venc || dd <= 30) docsVenc.push({ veh: `${v.marca || ""} ${v.modelo || ""} ${v.anio || ""}`.trim(), tipo, fecha: f, vencido: venc }); } }); });
+  disp.forEach((v) => { [["Seguro", v.vencSeg], ["RTV", v.vencRtv]].forEach(([tipo, f]) => { if (f) { const venc = f < today(); const dd = diasEntre(today(), f); if (venc || dd <= 30) docsVenc.push({ veh: `${v.marca || ""} ${v.modelo || ""} ${v.anio || ""}`.trim(), tipo, fecha: f, vencido: venc }); } }); });
   docsVenc.sort((a, b) => a.fecha.localeCompare(b.fecha));
   const tareasPend = (db.notas || []).filter((n) => n.tipo === "Tarea" && !n.hecha).sort((a, b) => (a.vence || "9999").localeCompare(b.vence || "9999"));
   const parados = disp.filter((v) => v.fechaIngreso && diasEntre(v.fechaIngreso, today()) >= 60).map((v) => ({ nombre: `${v.marca || ""} ${v.modelo || ""} ${v.anio || ""}`.trim(), dias: diasEntre(v.fechaIngreso, today()) })).sort((a, b) => b.dias - a.dias);
