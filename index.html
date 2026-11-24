@@ -145,7 +145,7 @@ const cambiarClaveDe = (userId, clave) => rpc("mg_cambiar_clave", { p_user: user
 const eliminarAcceso = (userId) => rpc("mg_eliminar_usuario", { p_user: userId });
 
 // ---------- Sincronización por registro ----------
-const SYNC_COLS = ["vehiculos", "clientes", "ventas", "usuarios", "caja", "reservas", "notas", "actividad", "cxp", "papelera", "suscriptores", "pagosSusc"];
+const SYNC_COLS = ["vehiculos", "clientes", "ventas", "usuarios", "caja", "reservas", "notas", "actividad", "cxp", "papelera", "escribania", "suscriptores", "pagosSusc"];
 const tenantDe = (col, r) => col === "suscriptores" ? r.id : col === "pagosSusc" ? (r.suscriptorId || null) : (r.tenantId || null);
 function hashStr(str) { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); }
 function snapshotDb(db) {
@@ -244,7 +244,7 @@ const PROCEDENCIA = ["Iquique (vía Chile)", "Importación directa", "Local"];
 const COMBUSTIBLE = ["Nafta", "Diésel", "Flex", "Híbrido", "Eléctrico"];
 const CONDICION = ["Excelente", "Muy bueno", "Bueno", "Regular", "Para reparar"];
 const GASTOS_FIJOS = [["despacho", "Despacho aduanero"], ["flete", "Flete"], ["taller", "Reparación taller"], ["pintura", "Pintura"], ["escribania", "Escribanía"], ["otros", "Otros"]];
-const PERMS = [["inicio", "Inicio"], ["stock", "Stock"], ["taller", "Taller"], ["clientes", "Clientes"], ["reservas", "Reservas"], ["ventas", "Ventas"], ["cobranza", "Cobranza"], ["caja", "Caja"], ["cxp", "Por pagar"], ["fact", "Facturación"], ["reportes", "Reportes"], ["notas", "Notas"], ["legal", "Legal"]];
+const PERMS = [["inicio", "Inicio"], ["stock", "Stock"], ["taller", "Taller"], ["clientes", "Clientes"], ["reservas", "Reservas"], ["ventas", "Ventas"], ["cobranza", "Cobranza"], ["caja", "Caja"], ["cxp", "Por pagar"], ["fact", "Facturación"], ["reportes", "Reportes"], ["notas", "Notas"], ["legal", "Legal"], ["escribania", "Escribanía"]];
 const PLANES = ["Mensual", "Anual", "Único pago"];
 const allPerms = () => Object.fromEntries(PERMS.map(([k]) => [k, true]));
 
@@ -359,6 +359,7 @@ function Ico({ name, size = 16 }) {
     reportes: <><path d="M4 20h16" /><path d="M6.5 16.5v-4M11 16.5V8M15.5 16.5v-6M20 16.5V5" /></>,
     notas: <><path d="M5 4h14v11l-5 5H5z" /><path d="M14 20v-5h5" /><path d="M8.5 8.5h7M8.5 12h4" /></>,
     legal: <><path d="M12 4v16M7 20h10" /><path d="M5 8h14" /><path d="M5 8l-2.5 6a2.8 2.8 0 0 0 5 0zM19 8l-2.5 6a2.8 2.8 0 0 0 5 0z" /></>,
+    escribania: <><path d="M9 4h6v4.5l2.5 3.5h-11L9 8.5z" /><path d="M5 15h14v3H5z" /><path d="M7 21h10" /></>,
     log: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>,
     papelera: <><path d="M4.5 7h15" /><path d="M9.5 7V4.5h5V7" /><path d="M6.5 7l1 13h9l1-13" /><path d="M10 11v5.5M14 11v5.5" /></>,
     cfg: <><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></>,
@@ -385,7 +386,7 @@ function Marca({ size = 22, tagline = false, center = false }) {
 }
 
 // ============================================================ APP (router auth)
-const DB0 = { suscriptores: [], vehiculos: [], clientes: [], ventas: [], usuarios: [], caja: [], reservas: [], pagosSusc: [], notas: [], actividad: [], cxp: [], papelera: [], cfgs: {} };
+const DB0 = { suscriptores: [], vehiculos: [], clientes: [], ventas: [], usuarios: [], caja: [], reservas: [], pagosSusc: [], notas: [], actividad: [], cxp: [], papelera: [], escribania: [], cfgs: {} };
 let AUDIT = { usuario: "", tid: null };
 function auditar(setDb, accion, detalle) {
   const { usuario, tid } = AUDIT;
@@ -816,6 +817,7 @@ function Sistema({ db, setDb, auth, onLogout, cloud }) {
     actividad: (db.actividad || []).filter((a) => a.tenantId === tid),
     cxp: (db.cxp || []).filter((x) => x.tenantId === tid),
     papelera: (db.papelera || []).filter((p) => p.tenantId === tid),
+    escribania: (db.escribania || []).filter((x) => x.tenantId === tid),
   };
   AUDIT = { usuario: auth.nombre || auth.user, tid };
   useEffect(() => { auditar(setDb, "Inició sesión", `${auth.nombre || auth.user} (${auth.rol})`); }, []);
@@ -837,7 +839,7 @@ function Sistema({ db, setDb, auth, onLogout, cloud }) {
   const irA = (k) => { setTab(k); setMenuAbierto(false); try { window.scrollTo(0, 0); } catch {} };
   const disponibles = new Set(TABS.map(([k]) => k));
   const etiqueta = Object.fromEntries(TABS);
-  const GRUPOS = [["Operación", ["inicio", "stock", "taller", "reservas", "ventas"]], ["Clientes y cobros", ["clientes", "cobranza", "caja", "cxp"]], ["Documentos", ["fact", "legal", "notas"]], ["Gestión", ["reportes", "log", "papelera", "cfg"]]]
+  const GRUPOS = [["Operación", ["inicio", "stock", "taller", "reservas", "ventas"]], ["Clientes y cobros", ["clientes", "cobranza", "caja", "cxp"]], ["Documentos", ["fact", "legal", "escribania", "notas"]], ["Gestión", ["reportes", "log", "papelera", "cfg"]]]
     .map(([t, ks]) => [t, ks.filter((k) => disponibles.has(k))]).filter(([, ks]) => ks.length);
   const nube = cloud ? ({ ok: [C.ok, "Sincronizado"], subiendo: [C.warn, "Guardando…"], error: [C.bad, "Sin conexión"], idle: [C.dim, "Nube"] }[cloud.nube.estado] || [C.dim, "Nube"]) : null;
   const iniciales = String(auth.nombre || auth.user || "?").split(/\s+/).map((x) => x[0]).slice(0, 2).join("").toUpperCase();
@@ -913,6 +915,7 @@ function Sistema({ db, setDb, auth, onLogout, cloud }) {
         {tab === "fact" && puede("fact") && <Facturacion db={sdb} cfg={cfg} selVeh={selVeh} setSelVeh={setSelVeh} />}
         {tab === "reportes" && puede("reportes") && <Reportes db={sdb} cfg={cfg} setDb={setDb} tid={tid} />}
         {tab === "notas" && puede("notas") && <Notas db={sdb} setDb={setDb} tid={tid} />}
+        {tab === "escribania" && puede("escribania") && <Escribania db={sdb} setDb={setDb} tid={tid} cfg={cfg} />}
         {tab === "legal" && puede("legal") && <Legal db={sdb} cfg={cfg} selVeh={selVeh} setSelVeh={setSelVeh} setVeh={setVeh} />}
         {tab === "cfg" && auth.rol === "admin" && <Config cfg={cfg} setCfg={setCfg} db={sdb} setDb={setDb} tid={tid} cloud={cloud} auth={auth} />}
         {tab === "log" && auth.rol === "admin" && <Actividad db={sdb} setDb={setDb} />}
@@ -2783,6 +2786,146 @@ function Notas({ db, setDb, tid }) {
           </div>
         ); })}
       </div>
+    </div>
+  );
+}
+
+// ============================================================ ESCRIBANÍA
+const TRAMITES_ESC = ["Transferencia", "Inscripción inicial", "Cédula verde", "Duplicado de título", "Poder", "Inscripción de prenda", "Cancelación de prenda", "Cambio de chapa", "Otro"];
+const ESTADOS_ESC = ["Pendiente", "Documentos en escribanía", "En trámite (Registro)", "Listo para retirar", "Entregado"];
+const COLOR_ESC = { "Pendiente": C.warn, "Documentos en escribanía": C.plata, "En trámite (Registro)": "#5aa9ff", "Listo para retirar": C.ok, "Entregado": C.dim };
+const DOCS_ESC = ["Cédula verde / título", "Cédula de identidad del vendedor", "Cédula de identidad del comprador", "Informe de dominio", "Comprobante de pago de impuestos", "Constancia de RUC (si es empresa)"];
+const ESC0 = { tramite: "Transferencia", vehiculoId: "", clienteId: "", escribania: "", escribano: "", telefono: "", estado: "Pendiente", ingreso: "", estimada: "", nroEscritura: "", costo: "", moneda: "Gs", pagaPor: "Cliente", docs: {}, notas: "" };
+
+function Escribania({ db, setDb, tid, cfg }) {
+  const [edit, setEdit] = useState(null); // trámite que se está editando (o nuevo)
+  const [ver, setVer] = useState("activos");
+  const [q, setQ] = useState("");
+  const lista0 = db.escribania || [];
+  const nomV = (id) => { const v = db.vehiculos.find((x) => x.id === id); return v ? `${v.marca || ""} ${v.modelo || ""} ${v.anio || ""}${v.chapa ? " · " + v.chapa : ""}`.trim() : "—"; };
+  const nomC = (id) => (db.clientes.find((c) => c.id === id) || {}).nombre || "—";
+  const activos = lista0.filter((t) => t.estado !== "Entregado");
+  const atrasados = activos.filter((t) => t.estimada && t.estimada < today());
+  const listos = lista0.filter((t) => t.estado === "Listo para retirar");
+  const mes = today().slice(0, 7);
+  const costoMes = lista0.filter((t) => (t.ingreso || t.creado || "").slice(0, 7) === mes && t.pagaPor === "Playa").reduce((a, t) => a + toGs(+t.costo || 0, t.moneda, cfg), 0);
+  const filtro = (t) => ver === "todos" ? true : ver === "listos" ? t.estado === "Listo para retirar" : ver === "atrasados" ? (t.estado !== "Entregado" && t.estimada && t.estimada < today()) : t.estado !== "Entregado";
+  const texto = q.trim().toLowerCase();
+  const lista = lista0.filter(filtro).filter((t) => !texto || [t.tramite, nomV(t.vehiculoId), nomC(t.clienteId), t.escribania, t.escribano, t.nroEscritura].join(" ").toLowerCase().includes(texto))
+    .sort((a, b) => (a.estimada || "9999").localeCompare(b.estimada || "9999"));
+
+  const guardar = () => {
+    const t = edit;
+    if (!t.vehiculoId && !t.clienteId) return alert("Elegí al menos el vehículo o el cliente del trámite");
+    const reg = { ...t, costo: t.costo === "" ? "" : +t.costo };
+    if (t.id) {
+      setDb((s) => ({ ...s, escribania: (s.escribania || []).map((x) => x.id === t.id ? reg : x) }));
+      auditar(setDb, "Editó trámite de escribanía", `${t.tramite} — ${nomV(t.vehiculoId)} · ${t.estado}`);
+    } else {
+      setDb((s) => ({ ...s, escribania: [{ ...reg, id: uid(), tenantId: tid, creado: today(), ingreso: t.ingreso || today() }, ...(s.escribania || [])] }));
+      auditar(setDb, "Nuevo trámite de escribanía", `${t.tramite} — ${nomV(t.vehiculoId)}`);
+    }
+    setEdit(null);
+  };
+  const avanzar = (t) => {
+    const i = ESTADOS_ESC.indexOf(t.estado); if (i < 0 || i >= ESTADOS_ESC.length - 1) return;
+    const nuevo = ESTADOS_ESC[i + 1];
+    setDb((s) => ({ ...s, escribania: (s.escribania || []).map((x) => x.id === t.id ? { ...x, estado: nuevo, ...(nuevo === "Entregado" ? { entregado: today() } : {}), ...(nuevo === "Listo para retirar" ? { listo: today() } : {}) } : x) }));
+    auditar(setDb, "Trámite de escribanía", `${t.tramite} — ${nomV(t.vehiculoId)} → ${nuevo}`);
+  };
+  const borrar = (t) => {
+    if (!confirm("¿Eliminar este trámite de escribanía?")) return;
+    setDb((s) => ({ ...s, escribania: (s.escribania || []).filter((x) => x.id !== t.id) }));
+    auditar(setDb, "Eliminó trámite de escribanía", `${t.tramite} — ${nomV(t.vehiculoId)}`);
+  };
+  const avisarCliente = (t) => {
+    const c = db.clientes.find((x) => x.id === t.clienteId) || {};
+    const tel = String(c.tel || c.telefono || "").replace(/[^0-9]/g, "").replace(/^0/, "");
+    const txt = encodeURIComponent(`Hola ${c.nombre || ""}, le avisamos desde ${(cfg.empresa || {}).nombre || "la playa"} que el trámite de ${t.tramite.toLowerCase()} de su ${nomV(t.vehiculoId)} está listo para retirar.`);
+    window.open(tel ? `https://wa.me/595${tel}?text=${txt}` : `https://wa.me/?text=${txt}`, "_blank");
+  };
+  const set = (k, v) => setEdit((s) => ({ ...s, [k]: v }));
+  const docsListos = (t) => DOCS_ESC.filter((d) => t.docs && t.docs[d]).length;
+
+  return (
+    <div>
+      <Titulo icon="escribania" sub="Transferencias, cédulas y demás trámites de cada auto">Escribanía</Titulo>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 16 }}>
+        <Kpi t="Trámites en curso" v={activos.length} onClick={() => setVer("activos")} />
+        <Kpi t="Atrasados" v={atrasados.length} c={atrasados.length ? C.bad : C.ok} onClick={() => setVer("atrasados")} />
+        <Kpi t="Listos para retirar" v={listos.length} c={C.ok} onClick={() => setVer("listos")} />
+        <Kpi t="Gastos de la playa este mes" v={money(costoMes, "Gs")} />
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+        {[["activos", "En curso"], ["atrasados", "Atrasados"], ["listos", "Listos"], ["todos", "Todos"]].map(([k, l]) => <Btn key={k} small kind={ver === k ? "acc" : "ghost"} onClick={() => setVer(k)}>{l}</Btn>)}
+        <input style={{ ...inp, width: 240, marginLeft: "auto" }} placeholder="Buscar auto, cliente, escribanía…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <Btn kind="acc" onClick={() => setEdit({ ...ESC0, ingreso: today() })}>+ Nuevo trámite</Btn>
+      </div>
+      {lista.length === 0 && <Empty t={lista0.length ? "No hay trámites con este filtro." : "Todavía no cargaste trámites. Tocá “Nuevo trámite” para registrar una transferencia u otro trámite de escribanía."} />}
+      <div style={{ display: "grid", gap: 10 }}>
+        {lista.map((t) => { const atr = t.estado !== "Entregado" && t.estimada && t.estimada < today(); const col = COLOR_ESC[t.estado] || C.dim; const i = ESTADOS_ESC.indexOf(t.estado); return (
+          <div key={t.id} style={{ ...box, padding: 14, borderLeft: `3px solid ${col}` }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>{t.tramite} · {nomV(t.vehiculoId)}</div>
+                <div style={{ fontSize: 12.5, color: C.dim, marginTop: 3 }}>
+                  Cliente: {nomC(t.clienteId)}{t.escribania || t.escribano ? ` · ${[t.escribania, t.escribano].filter(Boolean).join(" — ")}` : ""}{t.nroEscritura ? ` · Escritura N° ${t.nroEscritura}` : ""}
+                </div>
+                <div style={{ fontSize: 12.5, color: C.dim, marginTop: 2 }}>
+                  Ingresó {t.ingreso || t.creado || "—"}{t.estimada ? <> · estimado <span style={{ color: atr ? C.bad : C.dim, fontWeight: atr ? 700 : 400 }}>{t.estimada}{atr ? " (atrasado)" : ""}</span></> : ""}{t.costo !== "" && t.costo != null ? ` · ${money(+t.costo, t.moneda)} (paga ${(t.pagaPor || "Cliente").toLowerCase()})` : ""} · documentos {docsListos(t)}/{DOCS_ESC.length}
+                </div>
+                {/* progreso del trámite */}
+                <div style={{ display: "flex", gap: 4, marginTop: 10 }}>{ESTADOS_ESC.map((e, k) => <div key={e} title={e} style={{ flex: 1, height: 5, borderRadius: 3, background: k <= i ? col : C.border }} />)}</div>
+                <div style={{ fontSize: 12, color: col, fontWeight: 600, marginTop: 5 }}>{t.estado}</div>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {i < ESTADOS_ESC.length - 1 && <Btn small kind="acc" onClick={() => avanzar(t)}>Pasar a: {ESTADOS_ESC[i + 1]}</Btn>}
+                {t.estado === "Listo para retirar" && t.clienteId && <Btn small onClick={() => avisarCliente(t)}>Avisar por WhatsApp</Btn>}
+                <Btn small kind="ghost" onClick={() => setEdit({ ...ESC0, ...t, costo: t.costo ?? "" })}>Editar</Btn>
+                <Btn small kind="ghost" onClick={() => borrar(t)} style={{ color: C.bad, borderColor: C.bad }}>✕</Btn>
+              </div>
+            </div>
+          </div>
+        ); })}
+      </div>
+
+      {edit && (
+        <Modal onClose={() => setEdit(null)} w={780}>
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>{edit.id ? "Editar trámite" : "Nuevo trámite de escribanía"}</div>
+          <SubT>Trámite</SubT>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <Field label="Tipo de trámite"><select style={inp} value={edit.tramite} onChange={(e) => set("tramite", e.target.value)}>{TRAMITES_ESC.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Vehículo"><select style={inp} value={edit.vehiculoId} onChange={(e) => { const v = db.vehiculos.find((x) => x.id === e.target.value); set("vehiculoId", e.target.value); if (v && v.clienteId && !edit.clienteId) set("clienteId", v.clienteId); }}><option value="">— Elegir —</option>{db.vehiculos.map((v) => <option key={v.id} value={v.id}>{`${v.marca || ""} ${v.modelo || ""} ${v.anio || ""}${v.chapa ? " · " + v.chapa : ""}`}</option>)}</select></Field>
+            <Field label="Cliente"><select style={inp} value={edit.clienteId} onChange={(e) => set("clienteId", e.target.value)}><option value="">— Elegir —</option>{db.clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></Field>
+            <Field label="Estado"><select style={inp} value={edit.estado} onChange={(e) => set("estado", e.target.value)}>{ESTADOS_ESC.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Fecha de ingreso"><input type="date" style={inp} value={edit.ingreso || ""} onChange={(e) => set("ingreso", e.target.value)} /></Field>
+            <Field label="Fecha estimada de entrega"><input type="date" style={inp} value={edit.estimada || ""} onChange={(e) => set("estimada", e.target.value)} /></Field>
+          </div>
+          <SubT>Escribanía</SubT>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
+            <Field label="Escribanía"><input style={inp} value={edit.escribania} onChange={(e) => set("escribania", e.target.value)} placeholder="Nombre de la escribanía" /></Field>
+            <Field label="Escribano/a"><input style={inp} value={edit.escribano} onChange={(e) => set("escribano", e.target.value)} /></Field>
+            <Field label="Teléfono"><input style={inp} value={edit.telefono} onChange={(e) => set("telefono", e.target.value)} /></Field>
+            <Field label="N° de escritura"><input style={inp} value={edit.nroEscritura} onChange={(e) => set("nroEscritura", e.target.value)} /></Field>
+          </div>
+          <SubT>Costo</SubT>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 1fr", gap: 10 }}>
+            <Field label="Honorarios y gastos"><input type="number" style={inp} value={edit.costo} onChange={(e) => set("costo", e.target.value)} /></Field>
+            <Field label="Moneda"><select style={inp} value={edit.moneda} onChange={(e) => set("moneda", e.target.value)}><option>Gs</option><option>USD</option></select></Field>
+            <Field label="Lo paga"><select style={inp} value={edit.pagaPor} onChange={(e) => set("pagaPor", e.target.value)}><option>Cliente</option><option>Playa</option></select></Field>
+          </div>
+          <SubT>Documentos entregados</SubT>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {DOCS_ESC.map((d) => <label key={d} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, ...box, padding: "6px 10px", cursor: "pointer" }}><input type="checkbox" checked={!!(edit.docs || {})[d]} onChange={() => set("docs", { ...(edit.docs || {}), [d]: !(edit.docs || {})[d] })} />{d}</label>)}
+          </div>
+          <SubT>Notas</SubT>
+          <textarea style={{ ...inp, minHeight: 70, resize: "vertical" }} value={edit.notas} onChange={(e) => set("notas", e.target.value)} placeholder="Observaciones, qué falta, con quién se habló…" />
+          <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
+            <Btn kind="ghost" onClick={() => setEdit(null)}>Cancelar</Btn>
+            <Btn kind="acc" onClick={guardar}>{edit.id ? "Guardar cambios" : "Crear trámite"}</Btn>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

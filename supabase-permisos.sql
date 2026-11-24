@@ -22,6 +22,7 @@ language sql stable security definer set search_path = public as $$
         when 'reservas'  then array['reservas']
         when 'notas'     then array['notas']
         when 'cxp'       then array['cxp']
+        when 'escribania' then array['escribania', 'legal']
         else array[]::text[] end))
   end
   from public.perfiles p where p.user_id = auth.uid() and not p.bloqueado $$;
