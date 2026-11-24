@@ -815,19 +815,13 @@ function Sistema({ db, setDb, auth, onLogout, cloud }) {
       .mg-item.activo::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;border-radius:3px;background:${C.acc};box-shadow:0 0 10px ${C.acc}}
       .mg-item.activo svg{color:${C.acc}}
       .mg-top{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:12px;padding:10px 22px;border-bottom:1px solid ${C.border};background:rgba(21,24,29,.86);backdrop-filter:blur(10px);flex-wrap:wrap}
-      .mg-burger{display:none}
+      .mg-burger{display:none} .mg-solo-movil{display:none}
       .mg-overlay{display:none}
-      @media (max-width:900px){.mg-shell{grid-template-columns:1fr}.mg-side{position:fixed;left:0;top:0;bottom:0;width:272px;transform:translateX(-102%);transition:transform .22s ease;box-shadow:12px 0 40px rgba(0,0,0,.5)}.mg-side.abierto{transform:none}.mg-burger{display:inline-flex}.mg-overlay.abierto{display:block;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:35}.mg-top{padding:10px 14px}.mg-cont{padding:14px!important}}
+      @media (max-width:900px){.mg-shell{grid-template-columns:1fr}.mg-side{position:fixed;left:0;top:0;bottom:0;width:272px;transform:translateX(-102%);transition:transform .22s ease;box-shadow:12px 0 40px rgba(0,0,0,.5)}.mg-side.abierto{transform:none}.mg-burger{display:inline-flex}.mg-solo-movil{display:block}.mg-overlay.abierto{display:block;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:35}.mg-top{padding:10px 14px}.mg-cont{padding:14px!important}}
       @media (max-width:700px){.mg-cont [style*="grid-template-columns"]{grid-template-columns:1fr!important}.mg-cont [style*="grid-template-columns: repeat"]{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important}.mg-cont table{display:block;overflow-x:auto}}`}</style>
       <div className="mg-shell">
         <aside className={"mg-side noprint" + (menuAbierto ? " abierto" : "")}>
-          <div style={{ padding: "18px 16px 14px", borderBottom: `1px solid ${C.border}` }}>
-            <Marca size={18} />
-            <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 14, padding: "8px 10px", borderRadius: 8, background: "rgba(255,255,255,.03)", border: `1px solid ${C.border}` }}>
-              {cfg.empresa.logo ? <img src={cfg.empresa.logo} alt="" style={{ width: 28, height: 28, objectFit: "contain", borderRadius: 5, background: "#fff", padding: 2 }} /> : <div style={{ width: 28, height: 28, borderRadius: 6, background: METAL, display: "flex", alignItems: "center", justifyContent: "center", color: C.plata }}><Ico name="stock" size={16} /></div>}
-              <div style={{ minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cfg.empresa.nombre || "Mi playa de autos"}</div><div style={{ fontSize: 11.5, color: C.dim }}>{cfg.empresa.ciudad || "Panel de gestión"}</div></div>
-            </div>
-          </div>
+          <MarcaEmpresa emp={cfg.empresa} admin={auth.rol === "admin"} onConfigurar={() => irA("cfg")} />
           <nav style={{ padding: "4px 10px 10px", flex: 1, overflowY: "auto", minHeight: 0 }}>
             {GRUPOS.map(([t, ks]) => (
               <div key={t} style={{ marginTop: 10 }}>
@@ -851,6 +845,7 @@ function Sistema({ db, setDb, auth, onLogout, cloud }) {
         <div style={{ minWidth: 0 }}>
           <header className="mg-top noprint">
             <button className="mg-burger" onClick={() => setMenuAbierto(true)} aria-label="Abrir menú" style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.txt, borderRadius: 8, padding: 7, cursor: "pointer", alignItems: "center" }}><Ico name="menu" size={18} /></button>
+            {cfg.empresa.logo && <img className="mg-solo-movil" src={cfg.empresa.logo} alt="" style={{ height: 30, maxWidth: 70, objectFit: "contain", borderRadius: 4, background: cfg.empresa.logoFondo ? "#fff" : "transparent", padding: cfg.empresa.logoFondo ? 2 : 0 }} />}
             <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.dim, fontSize: 14 }}><Ico name={tab} size={17} /><span style={{ color: C.txt, fontWeight: 600 }}>{etiqueta[tab] || ""}</span></div>
             <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, fontSize: 12.5, color: C.dim, flexWrap: "wrap" }}>
               <BuscadorGlobal db={sdb} onCliente={(id) => { setSelCli(id); irA(puede("clientes") ? "clientes" : "cobranza"); }} onVehiculo={() => irA("stock")} onVenta={(vt) => { if (vt.plan) { setSelCli(vt.clienteId); irA(puede("cobranza") ? "cobranza" : "clientes"); } else irA("ventas"); }} />
@@ -1555,20 +1550,25 @@ function Config({ cfg, setCfg, db, setDb, tid, cloud, auth }) {
       <Titulo icon="cfg" sub="Empresa, cotización, usuarios y respaldo">Ajustes</Titulo>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
       <div style={{ ...box, padding: 16 }}>
-        <b>Empresa · Membrete · Logo / Marca de agua</b>
-        <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-          <Field label="Nombre"><input style={inp} value={emp.nombre || ""} onChange={(e) => setEmp({ nombre: e.target.value })} /></Field>
+        <b style={{ fontSize: 15 }}>Tu empresa</b>
+        <div style={{ fontSize: 12, color: C.dim, marginTop: 2 }}>El nombre y el logo reemplazan a MotorGestión en el menú y salen en los PDF.</div>
+        <div style={{ display: "flex", gap: 14, alignItems: "center", marginTop: 14, flexWrap: "wrap" }}>
+          <div onClick={() => logoRef.current.click()} title="Cargar logo" style={{ width: 132, height: 132, borderRadius: 14, border: `1px dashed ${emp.logo ? C.border : C.acc}`, background: emp.logo && emp.logoFondo ? "#fff" : "rgba(255,255,255,.03)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", overflow: "hidden", flexShrink: 0 }}>
+            {emp.logo ? <img src={emp.logo} alt="Logo" style={{ maxWidth: "88%", maxHeight: "88%", objectFit: "contain" }} /> : <div style={{ color: C.dim, fontSize: 12, textAlign: "center", padding: 10 }}><div style={{ fontSize: 26, color: C.acc, lineHeight: 1 }}>+</div>Cargar logo</div>}
+          </div>
+          <div style={{ display: "grid", gap: 8 }}>
+            <Btn small kind="acc" onClick={() => logoRef.current.click()}>{emp.logo ? "Cambiar logo" : "Cargar logo"}</Btn>
+            {emp.logo && <Btn small kind="ghost" onClick={() => setEmp({ logo: null })}>Quitar logo</Btn>}
+            {emp.logo && <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.dim, cursor: "pointer" }}><input type="checkbox" checked={!!emp.logoFondo} onChange={(e) => setEmp({ logoFondo: e.target.checked })} />Fondo blanco detrás del logo</label>}
+            <div style={{ fontSize: 11, color: C.dim, maxWidth: 190 }}>PNG o JPG. Mejor si tiene fondo transparente.</div>
+          </div>
+        </div>
+        <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
+          <Field label="Nombre de la empresa"><input style={inp} placeholder="Ej.: Automotores del Este" value={emp.nombre || ""} onChange={(e) => setEmp({ nombre: e.target.value })} /></Field>
           <Field label="WhatsApp / Teléfono"><input style={inp} value={emp.tel || ""} onChange={(e) => setEmp({ tel: e.target.value })} /></Field>
           <Field label="Dirección"><input style={inp} value={emp.dir || ""} onChange={(e) => setEmp({ dir: e.target.value })} /></Field>
           <Field label="Ciudad"><input style={inp} value={emp.ciudad || ""} onChange={(e) => setEmp({ ciudad: e.target.value })} /></Field>
-          <div>
-            <div style={{ fontSize: 12, color: C.dim, marginBottom: 6 }}>Logo (encabezado + marca de agua en los PDF)</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <Btn small onClick={() => logoRef.current.click()}>Cargar logo</Btn>
-              {emp.logo && <><img src={emp.logo} style={{ height: 40, borderRadius: 4, background: "#fff", padding: 3 }} /><Btn small kind="ghost" onClick={() => setEmp({ logo: null })}>Quitar</Btn></>}
-              <input ref={logoRef} type="file" accept="image/*" onChange={subirLogo} style={{ display: "none" }} />
-            </div>
-          </div>
+          <input ref={logoRef} type="file" accept="image/*" onChange={subirLogo} style={{ display: "none" }} />
           <div>
             <div style={{ fontSize: 12, color: C.dim, marginBottom: 6 }}>Firma / sello de la empresa (aparece en contratos y actas)</div>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -1748,6 +1748,33 @@ function Conflictos() {
           <div style={{ color: C.dim, marginTop: 4 }}>Se conservó la versión de la nube. Tu versión (no guardada): <code style={{ fontSize: 11, wordBreak: "break-all" }}>{JSON.stringify(c.local).slice(0, 300)}</code></div>
         </div>
       ))}</div>}
+    </div>
+  );
+}
+
+// Cabecera del menú: logo y nombre de la empresa (si los cargó); si no, la marca MotorGestión
+function MarcaEmpresa({ emp, admin, onConfigurar }) {
+  emp = emp || {};
+  const tieneMarca = !!emp.logo;
+  return (
+    <div style={{ padding: "18px 14px 14px", borderBottom: `1px solid ${C.border}`, textAlign: "center" }}>
+      {tieneMarca ? (
+        <>
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 96, padding: emp.logoFondo ? 10 : 0, borderRadius: 12, background: emp.logoFondo ? "#fff" : "transparent" }}>
+            <img src={emp.logo} alt={emp.nombre || "Logo"} style={{ maxWidth: "100%", maxHeight: 120, objectFit: "contain", filter: emp.logoFondo ? "none" : "drop-shadow(0 6px 16px rgba(0,0,0,.5))" }} />
+          </div>
+          {emp.nombre && <div style={{ fontFamily: FONT_C, fontWeight: 700, fontSize: 19, lineHeight: 1.15, marginTop: 10, color: C.txt, wordBreak: "break-word" }}>{emp.nombre}</div>}
+          {emp.ciudad && <div style={{ fontSize: 12, color: C.dim, marginTop: 2 }}>{emp.ciudad}</div>}
+          <div style={{ fontSize: 10.5, color: "#6f7782", marginTop: 8 }}>Sistema MotorGestión</div>
+        </>
+      ) : (
+        <>
+          <img src="./icon-192.png" alt="" style={{ width: 84, height: 84, display: "block", margin: "0 auto", filter: "drop-shadow(0 6px 16px rgba(0,0,0,.5))" }} />
+          <div style={{ display: "flex", justifyContent: "center", marginTop: 8 }}><span style={{ fontWeight: 700, fontStyle: "italic", fontFamily: FONT_C, fontSize: 22, letterSpacing: 0.2 }}><span style={{ color: C.plata }}>Motor</span><span style={{ color: C.acc }}>Gestión</span></span></div>
+          {emp.nombre && <div style={{ fontSize: 13.5, fontWeight: 600, marginTop: 6 }}>{emp.nombre}</div>}
+          {admin && <button onClick={onConfigurar} style={{ marginTop: 10, background: "transparent", border: `1px dashed ${C.border}`, color: C.dim, borderRadius: 8, padding: "7px 10px", fontSize: 12, cursor: "pointer", width: "100%" }}>+ Poner el logo de tu empresa</button>}
+        </>
+      )}
     </div>
   );
 }
