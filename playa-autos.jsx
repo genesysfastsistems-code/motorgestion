@@ -232,13 +232,30 @@ function costoTotal(v) {
 const margen = (v) => (+v.precioVenta || 0) - costoTotal(v);
 const margenPct = (v) => { const c = costoTotal(v); return c ? (margen(v) / c) * 100 : 0; };
 
-function generarPlan(monto, entrega, nCuotas, tasaAnual, fechaBase) {
+// Plan de pagos (sistema francés). "refuerzos": pagos extra [{ fecha, monto }] que descuentan del capital
+// su valor presente a la misma tasa; el resto se reparte en cuotas iguales.
+function generarPlan(monto, entrega, nCuotas, tasaAnual, fechaBase, refuerzos) {
   const capital = Math.max(0, monto - entrega);
   const i = (tasaAnual / 100) / 12;
-  let cuota = i === 0 ? capital / nCuotas : (capital * i) / (1 - Math.pow(1 + i, -nCuotas));
-  const plan = []; const d = fechaBase || today();
-  for (let k = 1; k <= nCuotas; k++) { const fv = sumarMeses(d, k); plan.push({ n: k, venc: fechaISO(fv), monto: Math.round(cuota), pagado: false, fechaPago: null, moraPagada: 0, diasAtrasoPago: 0 }); }
-  return { capital, cuota: Math.round(cuota), plan };
+  const d = fechaBase || today();
+  const refs = (refuerzos || []).filter((r) => r && r.fecha && +r.monto > 0).map((r) => ({ fecha: r.fecha, monto: Math.round(+r.monto) }));
+  const meses = (f) => Math.max(0, diasEntre(d, f) / 30.4375);
+  const pvRefs = refs.reduce((a, r) => a + (i === 0 ? r.monto : r.monto / Math.pow(1 + i, meses(r.fecha))), 0);
+  const capCuotas = Math.max(0, capital - pvRefs);
+  const n = Math.max(1, +nCuotas || 1);
+  const cuota = i === 0 ? capCuotas / n : (capCuotas * i) / (1 - Math.pow(1 + i, -n));
+  const items = [];
+  for (let k = 1; k <= n; k++) items.push({ venc: fechaISO(sumarMeses(d, k)), monto: Math.round(cuota), pagado: false, fechaPago: null, moraPagada: 0, diasAtrasoPago: 0 });
+  refs.forEach((r) => items.push({ venc: r.fecha, monto: r.monto, refuerzo: true, pagado: false, fechaPago: null, moraPagada: 0, diasAtrasoPago: 0 }));
+  items.sort((a, b) => a.venc.localeCompare(b.venc) || (a.refuerzo ? 1 : 0) - (b.refuerzo ? 1 : 0));
+  const plan = items.map((c, k) => ({ n: k + 1, ...c }));
+  return { capital, cuota: Math.round(cuota), plan, totalRefuerzos: refs.reduce((a, r) => a + r.monto, 0), excede: pvRefs > capital + 1 };
+}
+// "Cuota 3/12" o "Refuerzo 1/2" (los refuerzos se numeran aparte)
+function etiquetaCuota(c, plan) {
+  const lista = (plan || []).filter((x) => !!x.refuerzo === !!c.refuerzo);
+  const k = lista.findIndex((x) => x.n === c.n) + 1;
+  return `${c.refuerzo ? "Refuerzo" : "Cuota"} ${k}/${lista.length}`;
 }
 function deudaVenta(venta, tasaMora, cot) {
   const c1 = cot || 7300;
@@ -1149,7 +1166,7 @@ function PagoModal({ venta, cli, veh, cuota: c, cfg, onClose, onConfirm }) {
   const cuadro = { ...box, background: C.panel2, padding: 12 };
   return (
     <Modal onClose={onClose} w={440}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}><b>Registrar pago — Cuota {c.n}/{venta.plan.length}</b><Btn small kind="ghost" onClick={onClose}>✕</Btn></div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}><b>Registrar pago — {etiquetaCuota(c, venta.plan)}</b><Btn small kind="ghost" onClick={onClose}>✕</Btn></div>
       <div style={{ ...box, background: C.panel2, padding: 14 }}>
         <Rows rows={[["Cuota", money(c.monto, m)], ["Vencimiento", c.venc]]} />
         {vencida && <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 8, paddingTop: 8 }}>
@@ -1243,7 +1260,7 @@ function ClienteDetalle({ cli, db, cfg, setDb, volver }) {
             <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
               <Btn small kind="ghost" onClick={() => pagarePDF(cli, v, vh, cfg)}>Pagaré</Btn>
               {v.plan.some((c) => !c.pagado) && <Btn small kind="ghost" onClick={() => setRefin(v)} style={{ color: C.warn, borderColor: C.warn }}>Refinanciar</Btn>}
-              <span style={{ fontSize: 12, color: C.dim }}>Venta {v.fecha} · {v.plan.length} cuotas · {v.tasa}% anual{(v.refinanciaciones || []).length ? " · refinanciada" : ""}</span>
+              <span style={{ fontSize: 12, color: C.dim }}>Venta {v.fecha} · {v.plan.filter((c) => !c.refuerzo).length} cuotas{v.plan.some((c) => c.refuerzo) ? ` + ${v.plan.filter((c) => c.refuerzo).length} refuerzo(s)` : ""} · {v.tasa}% anual{(v.refinanciaciones || []).length ? " · refinanciada" : ""}</span>
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, padding: 12 }}>
@@ -1259,7 +1276,7 @@ function ClienteDetalle({ cli, db, cfg, setDb, volver }) {
                 const cot = cfg.cotizacion || 1; const abonMon = (c.abonadoGs || 0) ? (m === "USD" ? (c.abonadoGs / cot) : c.abonadoGs) : 0; const saldoMon = Math.max(0, total - abonMon); const parcialRow = !c.pagado && (c.abonadoGs || 0) > 0;
                 return (
                   <tr key={c.n} style={{ borderTop: `1px solid ${C.border}`, background: vencida ? "rgba(255,92,98,.06)" : "transparent" }}>
-                    <td style={td}>{c.n}/{v.plan.length}</td><td style={td}>{c.venc}</td><td style={td}>{money(c.monto, m)}</td>
+                    <td style={td}>{c.refuerzo ? <span style={{ color: C.warn, fontWeight: 600 }}>{etiquetaCuota(c, v.plan)}</span> : etiquetaCuota(c, v.plan).replace("Cuota ", "")}</td><td style={td}>{c.venc}</td><td style={td}>{money(c.monto, m)}</td>
                     <td style={{ ...td, color: interes ? C.bad : C.dim }}>{c.pagado ? (c.diasAtrasoPago ? c.diasAtrasoPago + "d" : "—") : vencida ? mora.dias + "d" : "—"}</td>
                     <td style={{ ...td, color: interes ? C.bad : C.dim, fontWeight: interes ? 700 : 400 }}>{money(interes, m)}</td>
                     <td style={{ ...td, fontWeight: 700 }}>{parcialRow ? money(saldoMon, m) : money(total, m)}{parcialRow && <div style={{ fontSize: 11, color: C.dim, fontWeight: 400 }}>abonó {money(abonMon, m)}</div>}</td>
@@ -1283,6 +1300,8 @@ function Ventas({ db, cfg, setDb, tid, vendedor, vehParaVenta, setVehParaVenta, 
   const disponibles = db.vehiculos.filter((v) => v.estado !== "Vendido");
   const [tipo, setTipo] = useState("credito");
   const [f, setF] = useState({ clienteId: "", vehiculoId: vehParaVenta || "", moneda: cfg.moneda, entrega: "", nCuotas: 12, tasa: 0, fecha: today() });
+  const [refuerzos, setRefuerzos] = useState([]); // [{ fecha, monto }]
+  const setRef = (k, campo, valor) => setRefuerzos((rs) => rs.map((r, x) => x === k ? { ...r, [campo]: valor } : r));
   const [precio, setPrecio] = useState("");
   const [permutaOn, setPermutaOn] = useState(false);
   const [pf, setPf] = useState({ marca: "", modelo: "", anio: "", chapa: "", color: "", valor: "" });
@@ -1295,18 +1314,21 @@ function Ventas({ db, cfg, setDb, tid, vendedor, vehParaVenta, setVehParaVenta, 
   const veh = db.vehiculos.find((v) => v.id === f.vehiculoId);
   const precioBase = veh ? (f.moneda === "USD" ? (veh.precioVenta || 0) / cfg.cotizacion : veh.precioVenta || 0) : 0;
   const precioFinal = precio === "" ? precioBase : +precio;
-  const prev = veh && tipo === "credito" ? generarPlan(precioFinal, +f.entrega || 0, +f.nCuotas, +f.tasa, f.fecha) : null;
+  const prev = veh && tipo === "credito" ? generarPlan(precioFinal, +f.entrega || 0, +f.nCuotas, +f.tasa, f.fecha, refuerzos) : null;
   const mkPermuta = () => {
     if (!permutaOn || !(+pf.valor)) return { veh: null, valorGs: 0 };
     const nv = { id: uid(), tenantId: tid, marca: pf.marca, modelo: pf.modelo, anio: pf.anio, chapa: pf.chapa, color: pf.color, vin: "", km: "", combustible: "Nafta", condicion: "Bueno", procedencia: "Recibido en permuta", fechaIngreso: today(), estado: "Disponible", precioCompra: +pf.valor, precioVenta: +pf.valor, gastos: {}, gastosExtra: [], fotosExt: [], fotosInt: [], nota: "Recibido en permuta" };
     return { veh: nv, valorGs: +pf.valor };
   };
-  const limpiar = () => { setF({ clienteId: "", vehiculoId: "", moneda: cfg.moneda, entrega: "", nCuotas: 12, tasa: 0, fecha: today() }); setPrecio(""); setPermutaOn(false); setPf({ marca: "", modelo: "", anio: "", chapa: "", color: "", valor: "" }); setGaranteOn(false); setGf({ nombre: "", ci: "", tel: "", direccion: "" }); };
+  const limpiar = () => { setF({ clienteId: "", vehiculoId: "", moneda: cfg.moneda, entrega: "", nCuotas: 12, tasa: 0, fecha: today() }); setRefuerzos([]); setPrecio(""); setPermutaOn(false); setPf({ marca: "", modelo: "", anio: "", chapa: "", color: "", valor: "" }); setGaranteOn(false); setGf({ nombre: "", ci: "", tel: "", direccion: "" }); };
   const confirmarCredito = () => {
     if (!f.clienteId) return alert("Elegí un cliente"); if (!veh) return alert("Elegí un vehículo");
+    const malos = refuerzos.filter((x) => x.fecha || x.monto).filter((x) => !x.fecha || !(+x.monto > 0) || x.fecha <= f.fecha);
+    if (malos.length) return alert("Revisá los refuerzos: cada uno necesita monto y una fecha posterior a la fecha base.");
     const { veh: pv, valorGs } = mkPermuta();
     const permutaMon = f.moneda === "USD" ? valorGs / cfg.cotizacion : valorGs;
-    const r = generarPlan(precioFinal, (+f.entrega || 0) + permutaMon, +f.nCuotas, +f.tasa, f.fecha);
+    const r = generarPlan(precioFinal, (+f.entrega || 0) + permutaMon, +f.nCuotas, +f.tasa, f.fecha, refuerzos);
+    if (r.excede) return alert("Los refuerzos superan el saldo a financiar. Bajá los montos o la cantidad de refuerzos.");
     const id = uid();
     setDb((s) => ({
       ...s,
@@ -1378,7 +1400,22 @@ function Ventas({ db, cfg, setDb, tid, vendedor, vehParaVenta, setVehParaVenta, 
               <Field label="Interés anual %"><input type="number" style={inp} value={f.tasa} onChange={(e) => set("tasa", e.target.value)} /></Field>
               <Field label="Fecha 1ª cuota (base)"><input type="date" style={inp} value={f.fecha} onChange={(e) => set("fecha", e.target.value)} /></Field>
             </div>
-            {prev && <div style={{ ...box, background: C.panel2, padding: 12, marginTop: 12, display: "flex", gap: 24, flexWrap: "wrap" }}><span style={{ color: C.dim }}>Capital: <b style={{ color: C.txt }}>{money(prev.capital, f.moneda)}</b></span><span style={{ color: C.dim }}>Cuota: <b style={{ color: C.ok }}>{money(prev.cuota, f.moneda)}</b></span><span style={{ color: C.dim }}>Total: <b style={{ color: C.txt }}>{money(prev.cuota * f.nCuotas + (+f.entrega || 0), f.moneda)}</b></span></div>}
+            <div style={{ ...box, background: C.panel2, padding: 12, marginTop: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <b style={{ fontSize: 13.5 }}>Refuerzos</b>
+                <span style={{ fontSize: 12, color: C.dim, flex: 1 }}>Pagos extra en fechas puntuales (aguinaldo, cosecha…). Bajan el valor de la cuota.</span>
+                <Btn small onClick={() => setRefuerzos((rs) => [...rs, { fecha: rs.length ? fechaISO(sumarMeses(rs[rs.length - 1].fecha || f.fecha, 6)) : fechaISO(sumarMeses(f.fecha, 6)), monto: "" }])}>+ Agregar refuerzo</Btn>
+              </div>
+              {refuerzos.map((r, k) => (
+                <div key={k} style={{ display: "grid", gridTemplateColumns: "60px 1fr 1fr auto", gap: 10, alignItems: "end", marginTop: 10 }}>
+                  <div style={{ fontSize: 13, color: C.dim, paddingBottom: 10 }}>N° {k + 1}</div>
+                  <Field label="Fecha"><input type="date" style={inp} value={r.fecha} onChange={(e) => setRef(k, "fecha", e.target.value)} /></Field>
+                  <Field label={`Monto (${f.moneda})`}><input type="number" style={inp} value={r.monto} onChange={(e) => setRef(k, "monto", e.target.value)} /></Field>
+                  <Btn small kind="ghost" onClick={() => setRefuerzos((rs) => rs.filter((_, x) => x !== k))} style={{ color: C.bad, borderColor: C.bad, marginBottom: 4 }}>✕</Btn>
+                </div>
+              ))}
+            </div>
+            {prev && <div style={{ ...box, background: C.panel2, padding: 12, marginTop: 12, display: "flex", gap: 24, flexWrap: "wrap" }}><span style={{ color: C.dim }}>Capital: <b style={{ color: C.txt }}>{money(prev.capital, f.moneda)}</b></span><span style={{ color: C.dim }}>Cuota: <b style={{ color: C.ok }}>{money(prev.cuota, f.moneda)}</b></span>{prev.totalRefuerzos > 0 && <span style={{ color: C.dim }}>Refuerzos: <b style={{ color: C.txt }}>{money(prev.totalRefuerzos, f.moneda)}</b></span>}<span style={{ color: C.dim }}>Total: <b style={{ color: C.txt }}>{money(prev.plan.reduce((a, c) => a + c.monto, 0) + (+f.entrega || 0), f.moneda)}</b></span>{prev.excede && <span style={{ color: C.bad, fontWeight: 600 }}>Los refuerzos superan el saldo a financiar</span>}</div>}
             <div style={{ marginTop: 12 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.txt }}><input type="checkbox" checked={garanteOn} onChange={(e) => setGaranteOn(e.target.checked)} />Agregar garante / codeudor</label>
               {garanteOn && (
@@ -1415,7 +1452,7 @@ function Ventas({ db, cfg, setDb, tid, vendedor, vehParaVenta, setVehParaVenta, 
           {db.ventas.map((v) => { const cli = db.clientes.find((c) => c.id === v.clienteId) || {}; const vh = db.vehiculos.find((x) => x.id === v.vehiculoId) || {}; const contado = v.tipo === "contado" || !v.plan; const d = contado ? null : deudaVenta(v, cfg.tasaMora, cfg.cotizacion); return (
             <div key={v.id} className="card-hover" style={{ ...box, padding: 12, display: "flex", gap: 12, alignItems: "center" }}>
               <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: contado ? "rgba(34,211,154,.15)" : "rgba(43,123,255,.15)", color: contado ? C.ok : C.acc }}>{contado ? "CONTADO" : "CRÉDITO"}</span>
-              <div style={{ flex: 1 }}><div style={{ fontWeight: 700 }}>{cli.nombre} <span style={{ color: C.dim, fontWeight: 400 }}>— {vh.marca} {vh.modelo} {vh.anio}</span>{v.permuta && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 20, background: "rgba(124,108,255,.18)", color: C.dev }}>PERMUTA</span>}{v.garante && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 20, background: "rgba(245,166,35,.18)", color: C.warn }}>GARANTE</span>}</div><div style={{ fontSize: 12, color: C.dim }}>{v.fecha}{contado ? " · " + money(v.precio, v.moneda) : " · " + v.plan.length + " cuotas · cuota " + money(v.cuota, v.moneda)}{v.vendedor ? " · " + v.vendedor : ""}{v.permuta ? " · recibe " + v.permuta.desc : ""}</div></div>
+              <div style={{ flex: 1 }}><div style={{ fontWeight: 700 }}>{cli.nombre} <span style={{ color: C.dim, fontWeight: 400 }}>— {vh.marca} {vh.modelo} {vh.anio}</span>{v.permuta && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 20, background: "rgba(124,108,255,.18)", color: C.dev }}>PERMUTA</span>}{v.garante && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 20, background: "rgba(245,166,35,.18)", color: C.warn }}>GARANTE</span>}</div><div style={{ fontSize: 12, color: C.dim }}>{v.fecha}{contado ? " · " + money(v.precio, v.moneda) : " · " + v.plan.filter((c) => !c.refuerzo).length + " cuotas · cuota " + money(v.cuota, v.moneda) + (v.plan.some((c) => c.refuerzo) ? " · " + v.plan.filter((c) => c.refuerzo).length + " refuerzo(s)" : "")}{v.vendedor ? " · " + v.vendedor : ""}{v.permuta ? " · recibe " + v.permuta.desc : ""}</div></div>
               <div style={{ textAlign: "right", fontSize: 13 }}>{contado ? <span style={{ color: C.ok }}>Pagado</span> : d.total > 0 ? <span style={{ color: d.vencidas ? C.bad : C.warn }}>Saldo {money(d.total, v.moneda)}</span> : <span style={{ color: C.ok }}>Cancelada</span>}</div>
               {!contado && <Btn small kind="ghost" onClick={() => contratoPDF(cli, v, vh, cfg)}>Contrato PDF</Btn>}
               <Btn small kind="ghost" onClick={() => actaEntregaPDF(cli, v, vh, cfg)}>Acta entrega</Btn>
@@ -1859,8 +1896,9 @@ function contratoPDF(cli, venta, veh, cfg) {
   const d = new Date(); const emp = cfg.empresa || {};
   const fecha = `${d.getDate()} de ${meses[d.getMonth()]} de ${d.getFullYear()}`; const M = venta.moneda;
   const mon = (x) => M === "USD" ? "US$ " + new Intl.NumberFormat("en-US").format(Math.round(x)) : "Gs " + nf.format(Math.round(x));
-  const totalFin = venta.entrega + venta.cuota * venta.plan.length;
-  const filas = venta.plan.map((c) => `<tr><td>${c.n}</td><td>${c.venc}</td><td style="text-align:right">${mon(c.monto)}</td></tr>`).join("");
+  const totalFin = venta.entrega + venta.plan.reduce((a, c) => a + (c.monto || 0), 0);
+  const refsV = venta.plan.filter((c) => c.refuerzo); const cuotasV = venta.plan.filter((c) => !c.refuerzo);
+  const filas = venta.plan.map((c) => `<tr><td>${etiquetaCuota(c, venta.plan)}</td><td>${c.venc}</td><td style="text-align:right">${mon(c.monto)}</td></tr>`).join("");
   printHTML(`<html><head><meta charset="utf-8"><title>Contrato de Compraventa</title>
   <style>@page{margin:2cm}body{font-family:'Times New Roman',Georgia,serif;color:#000;font-size:14px;line-height:1.6;max-width:760px;margin:0 auto;padding:20px 40px}
   .head{text-align:center;margin-bottom:10px}h1{text-align:center;font-size:18px;margin:6px 0}.sub{text-align:center;color:#555;margin-bottom:24px}
@@ -1871,7 +1909,7 @@ function contratoPDF(cli, venta, veh, cfg) {
   <h1>CONTRATO DE COMPRAVENTA DE VEHÍCULO CON FINANCIACIÓN</h1><div class="sub">${emp.ciudad || "Ciudad del Este"}, ${fecha}</div>
   <p>Entre <b>${emp.nombre || "LA VENDEDORA"}</b> (“LA VENDEDORA”), con domicilio en ${emp.dir || "—"}, y el/la Sr./Sra. <b>${cli.nombre}</b>, C.I./RUC N° <b>${cli.ci || "—"}</b>, domiciliado/a en ${cli.direccion || "—"} ${cli.ciudad || ""} (“EL COMPRADOR”)${venta.garante ? `, y el/la Sr./Sra. <b>${venta.garante.nombre}</b>, C.I./RUC N° <b>${venta.garante.ci || "—"}</b> (“EL GARANTE”)` : ""}, se conviene:</p>
   <h2>PRIMERA — Objeto</h2><table><tr><th>Marca</th><td>${veh.marca || "—"}</td><th>Modelo</th><td>${veh.modelo || "—"}</td></tr><tr><th>Año</th><td>${veh.anio || "—"}</td><th>Color</th><td>${veh.color || "—"}</td></tr><tr><th>Chapa</th><td>${veh.chapa || "—"}</td><th>Chasis/VIN</th><td>${veh.vin || "—"}</td></tr></table>
-  <h2>SEGUNDA — Precio y forma de pago</h2><p>Precio total: <b>${mon(venta.precio)}</b>. Forma de pago:</p><ul><li>Entrega inicial: <b>${mon(venta.entrega)}</b></li>${venta.permuta ? `<li>Recibe en permuta: <b>${venta.permuta.desc}</b> valuado en <b>Gs ${nf.format(Math.round(venta.permuta.valorGs))}</b>.</li>` : ""}<li>Saldo financiado: <b>${mon(venta.capital)}</b> en <b>${venta.plan.length} cuotas</b> mensuales de <b>${mon(venta.cuota)}</b>, interés anual ${venta.tasa}%.</li><li>Total financiado: <b>${mon(totalFin)}</b>.</li></ul>
+  <h2>SEGUNDA — Precio y forma de pago</h2><p>Precio total: <b>${mon(venta.precio)}</b>. Forma de pago:</p><ul><li>Entrega inicial: <b>${mon(venta.entrega)}</b></li>${venta.permuta ? `<li>Recibe en permuta: <b>${venta.permuta.desc}</b> valuado en <b>Gs ${nf.format(Math.round(venta.permuta.valorGs))}</b>.</li>` : ""}<li>Saldo financiado: <b>${mon(venta.capital)}</b> en <b>${cuotasV.length} cuotas</b> mensuales de <b>${mon(venta.cuota)}</b>${refsV.length ? ` y <b>${refsV.length} refuerzo${refsV.length > 1 ? "s" : ""}</b> (${refsV.map((c) => `${mon(c.monto)} el ${c.venc}`).join("; ")})` : ""}, interés anual ${venta.tasa}%.</li><li>Total financiado: <b>${mon(totalFin)}</b>.</li></ul>
   <h2>TERCERA — Plan de cuotas</h2><table><thead><tr><th>N°</th><th>Vencimiento</th><th style="text-align:right">Importe</th></tr></thead><tbody>${filas}</tbody></table>
   <h2>CUARTA — Mora</h2><p>El atraso genera interés moratorio del <b>${cfg.tasaMora}% mensual</b> por día de atraso, sin perjuicio de acciones legales.</p>
   <h2>QUINTA — Reserva de dominio</h2><p>LA VENDEDORA conserva la titularidad y/o prenda hasta la cancelación total del saldo.</p>
@@ -1894,7 +1932,7 @@ function reciboPDF(cli, venta, veh, c, m, cfg) {
   table{width:100%;border-collapse:collapse;margin:14px 0}td{padding:6px 4px;border-bottom:1px solid #eee}.firma{margin-top:50px;border-top:1px solid #333;width:50%;text-align:center;padding-top:6px}</style></head>
   <body>${wmHTML(cfg)}<div class="box"><h1>RECIBO DE DINERO</h1><small>${emp.nombre || ""} · N° ${venta.id.toUpperCase()}-${c.n}</small>
   <table><tr><td>Fecha</td><td><b>${fecha}</b></td></tr><tr><td>Recibí de</td><td><b>${cli.nombre || "—"}</b> (C.I. ${cli.ci || "—"})</td></tr>
-  <tr><td>Concepto</td><td>Cuota ${c.n}/${venta.plan.length} — ${veh.marca} ${veh.modelo} ${veh.anio}</td></tr><tr><td>Vencimiento</td><td>${c.venc}</td></tr>
+  <tr><td>Concepto</td><td>${etiquetaCuota(c, venta.plan)} — ${veh.marca} ${veh.modelo} ${veh.anio}</td></tr><tr><td>Vencimiento</td><td>${c.venc}</td></tr>
   <tr><td>Cuota</td><td>${mon(c.monto)}</td></tr>${c.moraPagada ? `<tr><td>Interés por mora (${c.diasAtrasoPago}d)</td><td>${mon(c.moraPagada)}</td></tr>` : ""}${des.join("")}
   <tr><td><b>TOTAL</b></td><td><b style="color:#e63946;font-size:16px">${mon(total)}</b></td></tr></table><div class="firma">Firma y sello</div></div></body></html>`);
 }
@@ -1902,7 +1940,7 @@ function waRecibo(cli, venta, veh, c, m, cfg) {
   const mon = (x) => m === "USD" ? "US$ " + new Intl.NumberFormat("en-US").format(x) : "Gs " + nf.format(Math.round(x));
   const total = (c.monto || 0) + (c.moraPagada || 0);
   const extra = [c.pagoGs ? `Gs ${nf.format(Math.round(c.pagoGs))}` : "", c.pagoUSD ? `US$ ${new Intl.NumberFormat("en-US").format(c.pagoUSD)}` : ""].filter(Boolean).join(" + ");
-  waOpen(cli.tel, `${cfg.empresa?.nombre || ""}\nRecibo — ${cli.nombre}\nCuota ${c.n}/${venta.plan.length} · ${veh.marca} ${veh.modelo} ${veh.anio}\n${c.moraPagada ? "Incluye mora: " + mon(c.moraPagada) + "\n" : ""}TOTAL PAGADO: ${mon(total)}${extra ? "\nDetalle: " + extra : ""}\n¡Gracias por su pago!`);
+  waOpen(cli.tel, `${cfg.empresa?.nombre || ""}\nRecibo — ${cli.nombre}\n${etiquetaCuota(c, venta.plan)} · ${veh.marca} ${veh.modelo} ${veh.anio}\n${c.moraPagada ? "Incluye mora: " + mon(c.moraPagada) + "\n" : ""}TOTAL PAGADO: ${mon(total)}${extra ? "\nDetalle: " + extra : ""}\n¡Gracias por su pago!`);
 }
 
 // ============================================================ INICIO (dashboard)
@@ -1915,7 +1953,7 @@ function Inicio({ db, cfg, ir, puede }) {
   const vencidas = creditos.reduce((n, v) => n + deudaVenta(v, cfg.tasaMora, cfg.cotizacion).vencidas, 0);
   const cobrosMes = (db.caja || []).filter((m) => m.tipo === "ingreso" && (m.fecha || "").slice(0, 7) === mesActual).reduce((a, m) => a + (m.monto || 0), 0);
   const proximas = [];
-  creditos.forEach((v) => { const cli = db.clientes.find((c) => c.id === v.clienteId) || {}; v.plan.forEach((c) => { if (!c.pagado) { const dd = diasEntre(today(), c.venc); const venc = c.venc < today(); if (venc || dd <= 7) proximas.push({ cli: cli.nombre, venc: c.venc, monto: c.monto, moneda: v.moneda, atrasada: venc, n: c.n }); } }); });
+  creditos.forEach((v) => { const cli = db.clientes.find((c) => c.id === v.clienteId) || {}; v.plan.forEach((c) => { if (!c.pagado) { const dd = diasEntre(today(), c.venc); const venc = c.venc < today(); if (venc || dd <= 7) proximas.push({ cli: cli.nombre, venc: c.venc, monto: c.monto, moneda: v.moneda, atrasada: venc, n: c.n, etq: etiquetaCuota(c, v.plan).toLowerCase() }); } }); });
   proximas.sort((a, b) => a.venc.localeCompare(b.venc));
   const meses6 = ult6();
   const serieVentas = meses6.map((m) => ({ label: m.label, value: db.ventas.filter((v) => (v.fecha || "").slice(0, 7) === m.key).length }));
@@ -1942,7 +1980,7 @@ function Inicio({ db, cfg, ir, puede }) {
           <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
             {proximas.length === 0 ? <span style={{ color: C.dim, fontSize: 13 }}>Sin cuotas próximas ni atrasadas. 👌</span> : proximas.slice(0, 8).map((p, i) => (
               <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "6px 0", borderBottom: `1px solid ${C.border}` }}>
-                <span>{p.cli} <span style={{ color: C.dim }}>· cuota {p.n}</span></span>
+                <span>{p.cli} <span style={{ color: C.dim }}>· {p.etq || "cuota " + p.n}</span></span>
                 <span style={{ color: p.atrasada ? C.bad : C.warn }}>{money(p.monto, p.moneda)} · {p.venc}{p.atrasada ? " ⚠" : ""}</span>
               </div>
             ))}
@@ -2199,7 +2237,7 @@ function estadoCuentaPDF(cli, ventas, vehiculos, cfg) {
   const emp = cfg.empresa || {};
   const bloques = ventas.map((v) => {
     const vh = vehiculos.find((x) => x.id === v.vehiculoId) || {};
-    const filas = (v.plan || []).map((c) => { const int = c.pagado ? (c.moraPagada || 0) : (c.venc < today() ? calcMora(c, cfg.tasaMora).monto : 0); const mon = (x) => v.moneda === "USD" ? "US$ " + new Intl.NumberFormat("en-US").format(Math.round(x)) : "Gs " + nf.format(Math.round(x)); return `<tr><td>${c.n}</td><td>${c.venc}</td><td style="text-align:right">${mon(c.monto)}</td><td style="text-align:right">${int ? mon(int) : "—"}</td><td style="text-align:right">${mon((c.monto || 0) + int)}</td><td style="color:${c.pagado ? "#16a34a" : c.venc < today() ? "#dc2626" : "#666"}">${c.pagado ? "Pagada" : c.venc < today() ? "Vencida" : "Pendiente"}</td></tr>`; }).join("");
+    const filas = (v.plan || []).map((c) => { const int = c.pagado ? (c.moraPagada || 0) : (c.venc < today() ? calcMora(c, cfg.tasaMora).monto : 0); const mon = (x) => v.moneda === "USD" ? "US$ " + new Intl.NumberFormat("en-US").format(Math.round(x)) : "Gs " + nf.format(Math.round(x)); return `<tr><td>${etiquetaCuota(c, v.plan)}</td><td>${c.venc}</td><td style="text-align:right">${mon(c.monto)}</td><td style="text-align:right">${int ? mon(int) : "—"}</td><td style="text-align:right">${mon((c.monto || 0) + int)}</td><td style="color:${c.pagado ? "#16a34a" : c.venc < today() ? "#dc2626" : "#666"}">${c.pagado ? "Pagada" : c.venc < today() ? "Vencida" : "Pendiente"}</td></tr>`; }).join("");
     const d = deudaVenta(v, cfg.tasaMora, cfg.cotizacion);
     return `<h3 style="margin:18px 0 4px">${vh.marca || ""} ${vh.modelo || ""} ${vh.anio || ""} — ${v.fecha}</h3>
     <table><thead><tr><th>Cuota</th><th>Vence</th><th style="text-align:right">Monto</th><th style="text-align:right">Interés</th><th style="text-align:right">Total</th><th>Estado</th></tr></thead><tbody>${filas}</tbody></table>
@@ -2701,7 +2739,7 @@ function abonoPDF(cli, venta, veh, c, ab, m, cfg) {
   <body>${wmHTML(cfg)}<div class="box"><h1>RECIBO DE ABONO PARCIAL</h1><small>${emp.nombre || ""} · N° ${venta.id.toUpperCase()}-${c.n}</small>
   <table><tr><td>Fecha</td><td><b>${new Date().toLocaleDateString("es-PY")}</b></td></tr>
   <tr><td>Recibí de</td><td><b>${cli.nombre || "—"}</b> (C.I. ${cli.ci || "—"})</td></tr>
-  <tr><td>Concepto</td><td>Abono a cuota ${c.n}/${venta.plan.length} — ${veh.marca} ${veh.modelo} ${veh.anio}</td></tr>
+  <tr><td>Concepto</td><td>Abono a ${etiquetaCuota(c, venta.plan).toLowerCase()} — ${veh.marca} ${veh.modelo} ${veh.anio}</td></tr>
   ${des.join("")}
   <tr><td><b>ABONO RECIBIDO</b></td><td><b style="color:#2b7bff;font-size:16px">${mon(pagadoMon)}</b></td></tr>
   <tr><td>Saldo restante de la cuota</td><td><b>${mon(saldoMon)}</b></td></tr>
@@ -3073,7 +3111,7 @@ function pagarePDF(cli, venta, veh, cfg) {
     <div class="hd"><div class="ttl">PAGARÉ</div><div class="num">N° ${venta.id.toUpperCase()}-${c.n}</div></div>
     <div class="monto">${simb(c.monto)}</div>
     <div class="lugarfecha">${emp.ciudad || "Ciudad del Este"}, ______ de ____________ de 20____</div>
-    <p>Por el presente <b>PAGARÉ</b> a la vista / con vencimiento el día <b>${c.venc}</b>, me(nos) obligo(amos) a pagar incondicional y solidariamente a la orden de <b>${emp.nombre || "________________"}</b>, la cantidad de <b>${simb(c.monto)}</b> (<i>${enLetras(c.monto)} ${unidad}</i>), correspondiente a la cuota ${c.n} de ${venta.plan.length} por la compra del vehículo ${veh.marca || ""} ${veh.modelo || ""} ${veh.anio || ""} (chasis ${veh.vin || "—"}).</p>
+    <p>Por el presente <b>PAGARÉ</b> a la vista / con vencimiento el día <b>${c.venc}</b>, me(nos) obligo(amos) a pagar incondicional y solidariamente a la orden de <b>${emp.nombre || "________________"}</b>, la cantidad de <b>${simb(c.monto)}</b> (<i>${enLetras(c.monto)} ${unidad}</i>), correspondiente a${c.refuerzo ? "l" : " la"} ${etiquetaCuota(c, venta.plan).toLowerCase().replace("/", " de ")} por la compra del vehículo ${veh.marca || ""} ${veh.modelo || ""} ${veh.anio || ""} (chasis ${veh.vin || "—"}).</p>
     <p>El presente documento devengará, en caso de mora, un interés del ${cfg.tasaMora}% mensual. Sin protesto.</p>
     <div class="firmas"><div class="fb"><div class="fi">${cli.firma ? `<img src="${cli.firma}"/>` : ""}</div><div class="fl">Deudor: ${cli.nombre}<br>C.I. ${cli.ci || "—"}</div></div>${gar ? `<div class="fb"><div class="fi"></div><div class="fl">Garante: ${gar.nombre}<br>C.I. ${gar.ci || "—"}</div></div>` : ""}</div>
   </div>`).join("");
